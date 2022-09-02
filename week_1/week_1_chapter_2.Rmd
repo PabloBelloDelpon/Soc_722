@@ -1,0 +1,254 @@
+---
+title: "Week 1 - Chapter 2"
+author: "Pablo Bello"
+date: "9/1/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE,warning = FALSE)
+```
+
+
+```{r, echo = FALSE}
+library(tidyverse)
+library(lubridate)
+library(ggpubr)
+```
+
+
+```{r}
+olympics  <- read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-07-27/olympics.csv')
+glimpse(olympics)
+```
+```{r}
+table(olympics$medal)
+```
+
+## Question 1
+
+In the chapter we learned how to filter datasets. Can you figure out how to keep only the Gold Medalists? It should look something like this.
+
+How many rows does the resulting dataset have?
+
+```{r}
+gold_medalists <- 
+  olympics |> 
+  mutate(year = year(as.Date(as.character(year), format = "%Y"))) |>
+  filter(medal == "Gold")
+```
+
+**The dataset has `r nrow(gold_medalists)` rows.**
+
+## Question 2
+
+Make a plot that has year on one axis and the age of the winner on the other. What's the most appropriate plot to display these data?
+
+How has the age of participants change across the years?
+
+**There isn't a clear pattern on the data.**
+
+We are missing a lot of information because there are a lot of athletes that have the same age. This means we are overplotting. Can you think of a solution to this?
+
+**Either a boxplot (as shown here), some alpha + jitter.**
+
+```{r}
+gold_medalists |> 
+  select(year,age) |> 
+  drop_na() |> # Avoid ggplot's warning message
+  ggplot(aes(year,age, group = year)) +
+  geom_boxplot() +
+  #geom_jitter(alpha = .1,amount = .4) +
+  labs(x = "Year",
+       y = "Age of winner") +
+  theme_pubr(border = TRUE) 
+```
+
+## Question 3
+
+The following bit of code gives us the amount of medals that the U.S. has won across the years.
+
+```{r}
+us_medals <- 
+  gold_medalists |> 
+  filter(noc == "USA") |> 
+  group_by(year,season) |> # Group by year and season
+  summarise(num_medals = n(),.groups = "drop") |>
+  arrange(desc(year))
+
+head(us_medals)
+```
+
+You have two columns now: one for year and one for the number of Gold Medals won that year. Plot this trajectory as a linegraph.
+
+What was the country's most successful year? As a bonus, can you guess why the line is so wiggly (technical term) towards the end?
+
+```{r}
+###--- Most successful year
+us_medals2 <- 
+  us_medals |> 
+  group_by(year) |> # Group only by year
+  summarise(num_medals = sum(num_medals))
+  
+m_s <- 
+  us_medals |> 
+  filter(num_medals == max(num_medals)) |> 
+  pull(year)
+
+
+
+
+us_medals2 |> 
+  mutate(c = ifelse(num_medals == max(num_medals),TRUE,FALSE)) |> # Identify most suc. year
+  ggplot(aes(year,num_medals, group = 1)) +
+  geom_line(color = "blue") +
+  geom_point(size = 2, aes(color = c)) +
+  labs(x = "Year",
+       y = "Number of Medals",
+       title = "Number of Gold Medas Won by US Athletes",
+       caption = paste0("Red point indicate most successful year (",m_s,")")) +
+  scale_color_manual(values = c("blue","red")) +
+  theme_pubr(border = TRUE) +
+  theme(legend.position = "none")
+
+```
+
+```{r}
+###--- Why is the line wiggly? 
+year_winter <- us_medals |> filter(season == "Winter") |> pull(year)
+
+us_medals |>
+  mutate(c = ifelse(num_medals == max(num_medals),TRUE,FALSE)) |> # Identify most suc. year
+  ggplot(aes(year,num_medals, group = season, color = season)) +
+  geom_line() +
+  geom_point(size = 2) +
+  geom_vline(xintercept = year_winter,alpha = .3) +
+  labs(x = "Year",
+       y = "Number of Medals",
+       title = "Number of Gold Medas Won by US Athletes",
+       caption = paste0()) +
+  theme_pubr(border = TRUE) 
+```
+
+
+**The line is wiggly because grouping only by year the summer and winter Olympics are conflated. The US wins way fewer medals in winter than in summer Olympics (we could look at why that is with this data, number of events? number of US participants? Are Americans not good at curling? but maybe another time). After 1980 summer and winter Olympics happen in different years so there is one data point for the summer (a lot of medals) and then another for the winter (very few medals). (See vertical lines in next plot). If we group instead by year and season then the data starts to make more sense.**
+
+
+## Question 4
+
+Now, let's explore differences in the kind of athlete that has excelled at different events. Let's look at two hallmark events in the Olympics: gymnastics and the 100 meter dash. I am going to make a dataset that only includes data about these events.
+
+
+```{r}
+two_events <- 
+  gold_medalists %>%
+  filter(event %in% c("Gymnastics Men's Individual All-Around",
+                 "Gymnastics Women's Individual All-Around",
+                 "Athletics Women's 100 metres",
+                 "Athletics Men's 100 metres")) 
+
+```
+
+
+Filter the dataset I just created so that it only contains the gymnastics events. Now, make a histogram where age is in the x-axis.
+Briefly describe this distribution.
+
+**I just like density plots better in this case**
+**Hill shaped (not really a bell in my opinion) distribution with mean around 25 years old.**
+
+```{r}
+two_events |> 
+  filter(str_detect(event,"Gym") == TRUE) |> # Keep only gymnastics events
+  mutate(event = str_remove(event,"Gymnastics")) |>  # Make names shorter for plotting
+  ggplot(aes(age)) +
+  #geom_histogram(bins = 20) +
+  labs(y = "",
+       x = "Age of Athlete",
+       color = "",
+       fill = "",
+       title = "Age of Gymnastic Events Winners") +
+  geom_density(alpha = .4) +
+  theme_pubr(border = TRUE,
+             legend = "bottom")
+```
+
+
+Now, try to see whether there are differences between female and male athletes by using the facet_wrap() function. What athletes tend to be older?
+
+**Winners of the women's event tend to be younger.**
+
+
+```{r}
+two_events |> 
+  filter(str_detect(event,"Gym") == TRUE) |>
+  mutate(event = str_remove(event,"Gymnastics")) |> 
+  ggplot(aes(age, group = event, fill = event, color = event)) +
+  #geom_histogram(bins = 20) +
+  labs(y = "",
+       x = "Age of Athlete",
+       color = "",
+       fill = "",
+       title = "Age of Gymnastic Events Winners by Gender") +
+  geom_density(alpha = .4) +
+  theme_pubr(border = TRUE,
+             legend = "bottom")
+```
+ 
+
+## Question 5
+
+Now, you're going to use boxplots to show me which one of the events above has taller athletes. Make a boxplot where the x-axis is event and the y-axis is height.
+
+Briefly describe your results.
+
+**Athletes competing in the men's event are taller on average than participants of the women's event.**
+
+```{r}
+two_events |> 
+  filter(str_detect(event,"Gym") == TRUE) |>
+  mutate(event = str_remove(event,"Gymnastics")) |> 
+  ggplot(aes(event,height)) +
+  geom_boxplot() +
+  labs(x = "",
+       y = "Athlete Height",
+       title = "") +
+  theme_pubr(border = TRUE)
+
+```
+
+## Question 6
+
+Now, let's do another exercise. We will explore the proportion of U.S. medals that were won by male and female athletes each year.
+
+First, let's keep only U.S. cases.
+
+```{r}
+us_medalists <- 
+  gold_medalists %>% 
+  filter(noc == "USA")
+```
+Make a barplot where the x axis is year. Make sure you can see parallel lines for female and male athletes.
+
+Can you notice any patterns?
+
+**The proportion of female athletes increases over time.**
+
+```{r}
+us_medalists |> 
+  select(sex,year) |> 
+  mutate(
+    sex = ifelse(sex == "F","Female","Male"), # pretty names
+    sex = factor(sex,levels =c("Male","Female"))) |> # for color consistency w/ previous plot
+  drop_na() |> # avoid ggplot warning
+  ggplot(aes(year, fill = sex)) +
+  geom_bar(position = "fill") +
+  labs(y = "Proportion",
+       x = "",
+       fill = "",
+       title = "U.S. medals by sex of athlete") +
+  theme_pubr(border = TRUE,
+             legend = "bottom")
+  
+```
+
+
