@@ -1,0 +1,221 @@
+---
+title: "Untitled"
+author: "Pablo Bello"
+date: "9/13/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(gssr)
+library(tidyverse)
+library(ngramr)
+library(showtext)
+library(grid)
+library(ggtext)
+library(Cairo)
+```
+
+```{r}
+data("gss_all")
+```
+
+```{r}
+###--- Helper functions
+library(silgelib)
+
+###--- Set a theme for plots
+
+
+theme_figs <- function(back_color,grid_color,font_family, margins_grid){
+    #theme_roboto(base_size = 20)
+    theme_minimal(base_size = 30) +
+      theme(
+        plot.background = element_rect(fill = back_color, color = back_color),
+        panel.background = element_rect(fill = grid_color, color = grid_color),
+        plot.title = element_text(size = rel(1.5), hjust = .5,vjust = 2),
+        plot.subtitle = element_text(size = rel(.8), hjust = .5),
+        plot.caption = element_markdown(lineheight = 1.2),
+        axis.title.x = element_text(size = rel(1), color = c1),
+        #axis.title.y = element_text(size = rel(1)),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size = rel(1), color = c1),
+        #axis.text.y.left = element_text(size = rel(1.2)),
+        #axis.text.y = element_blank(),
+        #axis.text.y.right = element_text(size = rel(0.9)),
+        legend.position = "right",
+        panel.grid = element_blank(),
+        text = element_text(family = font_family),
+        plot.margin = unit(margins_grid, "cm")
+      )
+  }
+
+```
+
+
+```{r}
+###--- Colors & Font
+bg <- "#ede5d8"
+bg <- "#BFE3B4"
+bg <- "#e6f8d1"
+c1 <- "#253c7f"
+c2 <- "#222c5e"
+c3 <- "#17163d"
+c4 <- "#010007"
+
+font <- "bauhaus"
+font_add(family = font, regular = "/Users/pablobellodelpon/Library/Fonts/BauhausRegular.ttf")
+
+
+###-- Margins around plot grid 
+top <- 5.496774
+right <- 5.109677
+bottom <- 6.464516
+left <- 5.109677
+margins <- c(top,right,bottom,left)
+margins <- 0.6 * margins
+
+
+```
+
+
+
+
+
+```{r}
+
+cont_vars <- c("year", "id", "hunt", "age","zombies")
+cat_vars <- c("race", "sex")
+wt_vars <- c("vpsu",
+             "vstrat",
+             "oversamp",
+             "formwt",              # weight to deal with experimental randomization
+             "wtssall",              # weight variable
+             "sampcode",            # sampling error code
+             "sample")              # sampling frame and method
+my_vars <- c(cont_vars, cat_vars, wt_vars)
+
+# clean up labeled vars as we go, create compwt
+gss_df <- 
+  gss_all %>%
+  filter(year > 1974 & year < 2021) %>% 
+  select(all_of(my_vars)) %>% 
+  mutate(across(everything(), haven::zap_missing), # Convert labeled missing to regular NA
+         across(all_of(wt_vars), as.numeric),
+         across(all_of(cat_vars), as_factor), 
+         across(all_of(cat_vars), fct_relabel, tolower),
+         across(all_of(cat_vars), fct_relabel, tools::toTitleCase),
+         compwt = oversamp * formwt * wtssall)
+
+```
+
+
+```{r}
+gss_clean1 <- 
+  gss_df |> 
+  group_by(year) |>
+  mutate(hunt2 = ifelse(hunt %in% c(1,2),"Yes","No")) |> 
+  count(hunt2) |> 
+  summarise(hunt2, prop = n/sum(n)) |> 
+  filter(hunt2 == "Yes")
+
+
+gss_clean1 |> 
+  ggplot(aes(year, prop)) +
+  geom_line() +
+  theme_bw()
+```
+
+
+```{r}
+tbl_clean <- 
+ gss_df |>
+  mutate(hunt2 = ifelse(hunt == 1,"Yes","No")) |> 
+  mutate(year_born = year - age) |> 
+  select(year_born, age, year,hunt2) |> 
+  mutate(born_in = floor(year_born/10) *10) |> 
+  group_by(year) |> 
+  count(born_in, hunt2) |> 
+  group_by(born_in,year) |> 
+  mutate(cohort_size = sum(n)) |> 
+  filter(cohort_size > 50) |> 
+  summarise(hunt2, prop = n/sum(n)) 
+
+# 
+#   group_by(born_in) |> 
+#   mutate(prop = zoo::rollmean(x = prop,k = 2, fill = NA))
+# 
+# 
+
+  
+
+
+(p1 <- 
+  tbl_clean |> 
+  filter(hunt2 == "Yes") |> 
+  ggplot(aes(year,prop,group = born_in, color = factor(born_in))) +
+  geom_line() +
+  theme_bw())
+
+
+
+  
+
+
+
+
+```
+
+
+
+```{r}
+
+install.packages("png")
+
+# Import the image
+img.file <- system.file(file.path("images", "background-image.png"),
+                       package = "ggpubr")
+img <- png::readPNG(img.file)
+
+p1 +
+ background_image(img)
+
+```
+
+
+```{r}
+###--- Graphic device and set the plot's theme
+showtext_auto()
+showtext_opts(dpi = 320)
+theme_set(theme_figs(back_color = bg,
+                     grid_color = bg,
+                     font_family = font,
+                     margins_grid = margins))
+
+
+p1 +
+  labs(title = "Popularity of hunting",
+       x = "",
+       y = "Proportion that hunt",
+       color = "Cohort") +
+  theme_figs(back_color = bg,
+                     grid_color = bg,
+                     font_family = font,
+                     margins_grid = margins) +
+
+  geom_hline(aes(yintercept = .5 ))  +
+  scale_y_continuous(breaks = c(0.1,0.2,0.3))
+  
+
+
+###--- Save as png
+ggsave("plot1.png",dpi=320,width = 30,height = 40,units = "cm")  
+
+
+
+```
+

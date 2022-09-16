@@ -1,0 +1,244 @@
+---
+title: "Week 3 DV 5"
+author: "Pablo Bello"
+date: "9/13/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Chapters 1-3 - Data Visualization
+
+
+Here, we are going to go over some key ideas from chapters 1 through 3 from Healy's Data Visualization. 
+
+## Question 1 
+
+Let's do a quick exercise. We are going to examine the relationship between two variables: exercise and BMI. Exercise is measured in minutes and BMI is centered so that the average is 0 and the units represent standard deviations around 0. Let's read in the data. 
+
+
+```{r}
+library(tidyverse)
+# Read in the data 
+exercise_data <- read_csv("Data/visualize_data.csv")
+glimpse(exercise_data)
+
+```
+
+
+Before, we see examine anything from the data, write down what you expect the relationship would look like. Do you think people who record more exercise will have more or less BMI? 
+
+**I would expect some kind of negative linear relationship but with outliers, since BMI is based on height and weight and gym buffs are heavy for their height.**
+
+Now, let's look at a simple correlation between these two variables. Recall that a correlation indicates how two variables move together. A negative correlation would imply that as one increases (say exercise), the other decreases (say BMI). A positive correlation in turn indicates that as one variable increases so does the other. Run the following code and tell me what the output indicates.  
+
+```{r}
+cor(exercise_data$Exercise, exercise_data$BMI)
+```
+
+Let's explore this relationship visually. Make a scatterplot with exercise in the x axis and BMI in the y axis. 
+
+```{r}
+exercise_data |> 
+  ggplot(aes(Exercise,BMI)) +
+  geom_point() +
+  theme_bw()
+
+```
+
+
+
+
+What do you see? 
+
+Yes, I tricked you. This is an example that comes from [Alberto Cairo](https://twitter.com/AlbertoCairo). It reinforces how important it is to look at your data.
+
+Looking at presumed relationships without visualizing your data is a dangerous task, as this [experiment](https://genomebiology.biomedcentral.com/articles/10.1186/s13059-020-02133-w#article-info) neatly shows. Always look at your data; you don't want any Gorillas or Dinosaurs in your analyses. 
+
+## Question 2 
+
+Many of the ideas in these chapters were already familiar to you but this is an opportunity to go deeper and really understand how the machinery of ggplot works. We are going to be working with a dataset from the `causact` package that contains information about the Human Development Index (HDI) and Corruption Index (CPI) for different countries in 2017. Begin by installing the package running `install.packages("causact")`. Load the package and glimpse the dataset: 
+
+
+```{r}
+library(causact)
+glimpse(corruptDF)
+```
+
+```{r, eval = FALSE}
+?corruptDF
+
+```
+
+
+Before we move forward, we want to know what these variables capture. Run `?corruptDF` and tell me in your own words what `CPI2017` and `HDI2017` capture.
+**It's a scale variable that goes from 0 (highly corrupt) to 100 (not-corrupt) and measures how the population perceives the level of corruption in their country.**
+
+## Question 3 
+
+Here, we are interwsted  in the relationship between the HDI and CPI. 
+
+Begin by making a scatter plot that shows the relationship between these two variables. Describe the relationship that you see. 
+
+```{r}
+(p1 <- 
+  corruptDF |> 
+  ggplot(aes(HDI2017,CPI2017)) +
+  geom_point() +
+  theme_bw() +
+  labs(y = "Corruption Perception Index",
+       x = "Human Development Index",
+       title = "Relationship between CPI and HDI across countries (2017)"))
+
+```
+ 
+**There is a positive relationship but CPI grows superlinear with HDI.**
+
+## Question 4 
+
+Add a layer that captures the overall relationship between these two variables using `geom_smooth()`. Use both the `lm` and `gam` methods. What are the differences? Which one do you prefer? 
+
+```{r, eval = FALSE}
+
+###--- This code worked at some point but not anymore. There is some problem with gam 
+# doesn't occur with others (e.g. loess) but I'll leave the code here for future referece
+# bc it's cool.
+
+# Vector of smoothing methods for each plot panel
+meths <- c("lm","gam")
+
+# Smoothing function with different behaviour in the different plot panels
+mysmooth <- function(formula,data,...){
+   meth <- eval(parse(text=meths[unique(data$PANEL)]))
+   x <- match.call()
+   x[[1]] <- meth
+   eval.parent(x)
+}
+
+
+
+bind_rows(corruptDF,corruptDF,.id = "copy") |> 
+  #mutate(copy = ifelse(copy == 1,"lm","gam")) |> 
+  ggplot(aes(HDI2017,CPI2017)) +
+  geom_point() +
+  theme_bw() +
+  labs(y = "Corruption Perception Index",
+       x = "Human Development Index",
+       title = "Relationship between CPI and HDI across countries (2017)") +
+  geom_smooth(method = "mysmooth") +
+  facet_grid(~ copy) # DOESN'T WORK WITH FACET_WRAP
+
+```
+
+```{r}
+###--- Since the previous code is broken I'll do it ugly
+library(patchwork)
+
+# Vector of smoothing methods for each plot panel
+meths <- c("gam","lm")
+
+plots <- 
+  lapply(meths,function(x){
+  
+  corruptDF |>
+  ggplot(aes(HDI2017,CPI2017)) +
+  geom_point() +
+  theme_bw() +
+  labs(y = "Corruption Perception Index",
+       x = "Human Development Index",
+       title = x
+      ) +
+  geom_smooth(method = x) 
+}) 
+
+
+patchwork <- plots[[1]] + plots[[2]]
+patchwork + 
+  plot_annotation(title = 'Relationship between CPI and HDI across countries (2017)')
+
+
+```
+
+
+
+**The gam seems to better fit the data, but it always does. I always prefer lm for simplicity.**
+
+## Question 5 
+
+It would be interesting to explore if this relationship varies by region. Add a fill and color aesthetic to the graph so that the lines and points are grouped by the variable `region`. 
+
+```{r}
+
+
+(p1 <- 
+  corruptDF |>
+  rename(Region = region) |> 
+  ggplot(aes(HDI2017,CPI2017, fill = Region,color = Region)) +
+  geom_point() +
+  theme_bw() +
+  labs(y = "Corruption Perception Index",
+       x = "Human Development Index",
+       title = "Relationship between CPI and HDI across countries (2017)"
+      ) +
+  geom_smooth(method = "lm",se = FALSE)) 
+
+
+
+```
+
+
+What do you see? Are patterns clear or is the graph too cluttered? What would be another way to get these trends by region but in a way to would be more legible? 
+> Hint: think facets
+
+**The only clear difference to me is between Western Europe and the rest. the relationship between HDI and CPI is stronger within this region than for any of the others. However, a way to see it more clearly as you hint would be to facet by region.**
+
+```{r}
+(p1_regions <- 
+  p1 +
+  facet_wrap(~ Region) +
+  theme(legend.position = "none"))
+```
+
+
+
+## Question 6 
+
+Using one of the options that Healy gives you in the `where to go next` section of chapter 3, reverse the scale of the x-axis. 
+
+
+```{r}
+(p1_regions_rev <- 
+  p1_regions +
+  scale_y_reverse())
+```
+**I reverse y insted (CPI) so that is becomes more intuitive to read.**
+
+## Question 7 
+
+Add a title and a subtitle to the plot. Also add a caption, where you let me know where the data comes from. 
+
+```{r}
+p1_regions_rev +
+  labs(subtitle = 'Grouped by geographical regions',
+       caption = "CPI Data comes from Transparency International\nHDI data comes from UN Development Reports")
+
+  
+```
+
+
+## Question 8 
+
+Now, that your plot about the relationship between the Human Development Index and the Corruption Perception Index is informative and sleek, you want to save it. Imagine it you want to print in a poster or send it to a supervisor. Show me code that would save the plot. 
+
+
+```{r}
+if(dir.exists("data_viz") == FALSE) dir.create("data_viz")
+ggsave(filename = "data_viz/plot_CPI_HDI.png")
+```
+
+
+
+
+

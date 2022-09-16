@@ -1,0 +1,312 @@
+---
+title: "Week 3 DV 4"
+author: "Pablo Bello"
+date: "9/14/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Chapter 4 - Data Visualization
+
+Here, we are going to practice and reinforce some of the key ideas from chapter 4. 
+
+## Question 1 
+
+We are going to work with a dataset of TV Ratings taken from IMDB. Let's read it in and see what we have. 
+
+```{r, echo = FALSE}
+library(tidyverse)
+```
+
+
+```{r}
+
+# Read in the data 
+tv_ratings <- read_csv("Data/tv_ratings.csv")
+
+# Glimpse the data 
+glimpse(tv_ratings)
+```
+
+
+
+We notice that each row is a season-title pair. Then we get the average rating for that season of that show, and the corresponding genre. 
+
+The first thing that we are going to look at is how rating develops across seasons, for different genres. To do this, we need shows that have lasted a while. The following bit of code counts how many seasons each show has and then keeps those shows that have had 5 seasons or more. 
+
+
+```{r}
+
+###--- The TIDY way
+tv_long <-
+  tv_ratings %>%
+  group_by(title) %>%
+  summarise(num_seasons = n()) %>%
+  ungroup() %>%
+  left_join(tv_ratings, by = "title")
+
+tv_long <-
+  tv_long %>%
+  filter(num_seasons >= 5)
+
+###--- The MEGA-TIDY way
+tv_long <-
+  tv_ratings |> 
+  group_by(title) |> 
+  filter(n() >= 5)
+
+###--- Which should be equivalent to:
+tv_long2 <-
+  tv_ratings |> 
+  group_by(title) |> 
+  filter(max(seasonNumber) >= 5)
+
+nrow(tv_long) == nrow(tv_long2) ###--- But it isn't
+
+
+###--- Because (amongst other things) there are two different series called Perenthood and two Battlestar Galactica
+tv_long |> 
+  count(title, seasonNumber) |> 
+  arrange(desc(n))
+
+tv_long |> 
+  filter(title == "Battlestar Galactica")
+
+tv_long |> 
+  filter(title == "Parenthood")
+
+
+###--- So what is going on?
+tv_long |> 
+  group_by(titleId) |> 
+  summarise(n = n(), s = sum(seasonNumber)) |> 
+  rowwise() |> 
+  mutate(i = sum(n:1))
+
+
+###---- Ahhhh,there are missing seasons
+tv_long |> 
+  filter(titleId == "tt0086765")
+
+###--- The this one method is best 
+tv_long <-
+  tv_ratings |> 
+  group_by(title) |> 
+  filter(n() >= 5)
+```
+
+
+Use `tv_long` to make a line plot to trace how average ratings evolve across seasons. Remember to use the group aesthetic so that each line represents one show. 
+
+It should look fairly messy. Can you draw any conclusions from it?
+
+```{r}
+(p1 <- 
+  tv_long |> 
+  ggplot(aes(seasonNumber,av_rating, group = titleId)) +
+  geom_line(alpha = .6) +
+  theme_bw() +
+  labs(x = "Season Number",
+       y = "Average Rating",
+       title = "Evolution of show ratings over seasons"))
+
+```
+
+**It is pretty messy. The conclusion would be that there isn't a clear trend across shows of how ratings evolve.**
+
+
+## Question 2
+
+Facet the plot above by `genres` so that we can see patterns more clearly. 
+
+What shows tend to last longer? Do ratings change much across seasons? Can you identify that show on `Drama, Family, Fantasy` whose ratings just plummeted?
+
+```{r}
+p1 +
+  facet_wrap(~ genres)
+
+###--- the show that plumets
+tv_long |> 
+  filter(genres == "Drama,Family,Fantasy") |> 
+  distinct(title) |> 
+  pull(title) 
+```
+
+
+
+## Question 3 
+
+Let's look at the `genres` that show up in the best rated shows. 
+
+First, filter the original data set - `tv_ratings` - so that it only includes rows where the average rating is higher or equal than 9. 
+
+
+```{r}
+(top_tv <- 
+  tv_ratings |>
+  filter(av_rating >= 9))
+
+
+###--- Since the question is "What is the genre with the most top-rated shows?"
+# I'll keep only unique shows that got 9 or more in one of their seasons
+# to control for n of seasons. 
+
+top_tv <- 
+  top_tv |> 
+  distinct(titleId,.keep_all = TRUE)
+  
+
+```
+ 
+Make a barplot where the x-axis is `genre`. 
+
+```{r}
+
+top_tv |> 
+  count(genres) |> 
+  mutate(genres = fct_reorder(genres,n)) |> 
+  ggplot(aes(n,genres)) +
+  geom_col(color = "white", fill = "#C3B1E1") +
+  theme_bw() +
+  labs(x = "Number of unique shows",
+       y = "Genre of the show",
+       title = "Number of top-rated shows (9 stars or more) by genre") 
+```
+
+The result should be hard to read - the names of the genres are quite long. Add `coord_flip()` to the end of your ggplot call and watch the results get clearer. Tell me what `coord_flip()` does. 
+
+**Flips the x and y axis.**
+
+
+What is the genre with the most top-rated shows? 
+
+**Drama and "Action,Crime and Drama".**
+
+
+## Question 4 
+
+As a comedy fan, I am quite distraught by the results. I want to compare the range of average ratings that comedies and dramas get. Surely there are many bad comedies but the best comedies should rival the best dramas. Right? 
+
+For this, we need to do a bit of wrangling that I am going to walk you through. 
+
+First, because the `genres` names are so convoluted, I am going to classify everything that includes the word "Comedy" as a comedy. 
+
+
+```{r}
+comedies_dramas <- 
+  tv_ratings %>% 
+  mutate(is_comedy = if_else(str_detect(genres, "Comedy"), 1, 0)) |>
+  filter(is_comedy == 1 | genres == "Drama") |> 
+  mutate(genres = if_else(genres == "Drama", "Drama", "Comedy"))
+
+glimpse(comedies_dramas)
+
+```
+
+Now, you should have a dataset with shows that are categorized as either drama or comedies. 
+
+Plot a density plot that shows the distribution of average ratings for both comedies and dramas. 
+```{r}
+comedies_dramas |> 
+  ggplot(aes(av_rating,fill = genres, color = genres)) +
+  geom_density(alpha = .4, trim = TRUE) + # Since we're looking at the tails i'll trim
+  # them in case there is no support. 
+  theme_bw() +
+  labs(x = "Average Rating",
+       y = "",
+       title = "Distribution of rarings across two genres")
+
+```
+
+How does my prediction above hold? Are dramas rated higher? 
+
+**It holds. In fact, the top 3 rated season-shows are all comedies. We can also see in the density plot that the Drama genre does not have support on the highest values of rating.**
+
+```{r}
+comedies_dramas |> 
+  arrange(desc(av_rating)) |> 
+  slice_head(n = 10) |> 
+  select(title, av_rating)
+```
+
+
+## Question 5
+
+Let's experiment with different ways of visualizing this. First, do the same plot using histograms. 
+
+```{r}
+comedies_dramas |> 
+  ggplot(aes(av_rating,fill = genres, color = genres)) +
+  geom_histogram(alpha = .4) +
+  theme_bw() +
+  labs(x = "Average Rating",
+       title = "Distribution of rarings across two genres")
+
+```
+
+
+What additional information does this give you? 
+
+> Hint: look at the size of the bars. I probably categorized way too many shows as "comedies". I had to stack the deck.
+
+**There are less dramas than comedies.**
+
+
+Now, use `geom_freqpoly()`. What do you notice? Of the three plots, which one do you think it's more informative? 
+
+```{r}
+comedies_dramas |> 
+  ggplot(aes(av_rating,fill = genres, color = genres)) +
+  geom_freqpoly() +
+  theme_bw() +
+  labs(x = "Average Rating",
+       title = "Distribution of rarings across two genres")
+
+```
+
+**It's the siloutte of geom_histogram. In this case geom_density is better if we want to  compare distributions, because the number of observations does not affect. Although density plots can many times create illusions so it's good to look at histograms to know where your observations really are. Even better, a version of the histogram with relative values instead of counts.**
+
+## Question 6 
+
+Let's now explore whether the actual quality of the show corresponded to how many people were paying attention. The column `share` indicates the share of viewership that that show and season acquired. We are going to examine the relationship between average rating and share of viewership. 
+
+Take our `comedies_dramas` dataset and make a plot where average rating is on the x-axis and share on the y-axis. Use `geom_bin_2d()` to make the plot. 
+
+
+```{r}
+(p2 <- 
+  comedies_dramas |> 
+  ggplot(aes(av_rating, share)) +
+  geom_bin_2d() +
+  scale_fill_continuous(high = "#132B43", low = "#56B1F7") +
+   labs(x = "Average Rating",
+        y = "Share of Viewership",
+        title = "Relationship between rating and popularity of a show") +
+    theme_bw()) # reverse the scale
+# More intuitive to me if darker where there are MORE observations. 
+
+```
+
+What do you see? What additional information does this give you in comparison to a scatter plot? 
+**Because there are many data points and they are over-plotted, geom_bin_2d breaks the grid into discrete units and counts the number of observations on each. The number of observations is then presented as color. Akin to geom_point (alpha = a low value)**
+
+
+```{r}
+p2 +
+  facet_wrap(~ genres)
+
+###--- Who's the outlier?
+comedies_dramas |> 
+  filter(share == max(share)) |> 
+  pull(title) 
+
+```
+
+Now add `genres` to the fill aesthetic. What patterns do you see? Can you identify that big outlier that apparently captured the nation? 
+
+**Again there are less drama shows so it is difficult to compare. We can say that there are more highly popular comedy shows (e.g. above 10% of viewership). For both genres rating and viewership are just weakly related. The big outlier was Dekalog.**
+
+
