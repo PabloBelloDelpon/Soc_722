@@ -1,0 +1,246 @@
+---
+title: "Practice Chapter 3 SR"
+author: "Pablo Bello"
+date: "9/23/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message = FALSE}
+library(rethinking)
+library(ggpubr)
+```
+
+
+```{r}
+###--- Setup
+p_grid <-seq(from=0,to=1,length.out=1000)
+prior <-rep(1,1000)
+likelihood <-dbinom(6,size=9,prob=p_grid)
+posterior <-likelihood*prior
+posterior <-posterior/sum(posterior)
+set.seed(100)
+samples <-sample(p_grid,prob=posterior,size=1e4,replace=TRUE)
+```
+
+
+### 3E1. How much posterior probability lies below p = 0.2?
+
+```{r}
+sum(samples < .2)/1e4
+```
+
+
+### 3E2. How much posterior probability lies above p = 0.8?
+
+```{r}
+sum(samples > .8)/1e4
+```
+
+
+
+### 3E3. How much posterior probability lies between p = 0.2 and p = 0.8?
+
+```{r}
+sum(samples > .2 & samples < .8)/1e4
+```
+
+### 3E4. 20% of the posterior probability lies below which value of p?
+
+```{r}
+quantile(samples, .2)
+```
+
+
+### 3E5. 20% ofthe posterior probability lies above which value of p?
+```{r}
+quantile(samples, .8)
+```
+
+
+### 3E6. Which values of p contain the narrowest interval equal to 66% of the posterior probability?
+
+```{r}
+HPDI(samples , prob = .66)
+```
+
+
+### 3E7. Which values of p contain 66% of the posterior probability, assuming equal posterior probability both below and above the interval?
+
+```{r}
+###--- The hard way
+
+quantile(samples, ((1 - .66)/2)) # lower bound
+quantile(samples, ((1 - .66)/2 + .66)) # upper bound
+
+
+###--- Or the easy way
+PI(samples, prob = .66)
+
+```
+
+### 3M1 
+
+```{r, message = FALSE}
+###--- Load my function (same as in ch2 script)
+source("week_4/helper_functions.R")
+
+###--- Compute grid approximation for W = 8, L = 7 and a flat prior
+tbl <- grid_approx(W = 8, L = 15 - 8,grid_n = 1000,plot = FALSE)
+
+head(tbl)
+```
+
+
+### 3M2 
+
+```{r}
+samples <- sample(tbl$p_water, prob = tbl$posterior_probability, size = 1e4, replace = TRUE)
+
+HPDI(samples, .9)
+```
+
+
+### 3M3
+
+```{r}
+w <- rbinom(1e4, size = 15, prob = samples) # Some predictions 
+sum(w == 8)/1e4 # P of 8 waters in 15 tosses
+```
+
+### 3M4
+```{r}
+w <- rbinom(1e4, size = 9, prob = samples) # Some predictions 
+sum(w == 6)/1e4 # P of 6 waters in 9 tosses
+```
+
+
+### 3M5
+
+```{r}
+###--- Use the step prior now
+tbl2 <- grid_approx(W = 8, L = 15 - 8, grid_n = 1000, plot = FALSE, prior_f = "step")
+samples2 <- sample(tbl2$p_water, prob = tbl2$posterior_probability, size = 1e4, replace = TRUE)
+
+HPDI(samples2, .9)
+```
+
+**With the new priors the 90% HPDI is  narrower.**
+
+
+```{r}
+w2 <- rbinom(1e4, size = 15, prob = samples2) # Some predictions 
+sum(w2 == 8)/1e4 # P of 8 waters in 15 tosses
+```
+
+**The probability of 8 water in 15 tosses is slightly higher (from ~.15 to ~.16).**
+
+```{r}
+w2 <- rbinom(1e4, size = 9, prob = samples2) # Some predictions 
+sum(w2 == 6)/1e4 # P of 8 waters in 15 tosses
+```
+
+**And the probability of 6 water in 9 tosses is  higher as well (from ~.17 to ~.24).  Which makes sense when we consider that the new priors favor higher P of water.** 
+
+### 3M6
+
+**Can't be done. There is not enough atoms in the universe.**
+
+
+### 3H1
+```{r}
+data(homeworkch3)
+
+###--- Number of boys
+b <- sum(birth1) + sum(birth2) 
+l <- length(birth1) + length(birth2)
+tbl <- grid_approx(W = b,L = l - b,grid_n = 1e4,plot = FALSE)
+
+tbl |> 
+  filter(posterior_probability == max(posterior_probability)) |> 
+  rename(p_boy = p_water)
+
+```
+
+**0.555 is the value for p_boy that maximizes the posterior probability.** 
+
+
+### 3H2
+```{r}
+###--- Sample from posterior
+samples <- sample(tbl$p_water, prob = tbl$posterior_probability, size = 1e4, replace = TRUE)
+
+###-- 50%, 89% and 97% posterior density interval
+HPDI(samples, .5)
+HPDI(samples, .89)
+HPDI(samples, .97)
+
+```
+
+
+### 3H3
+
+```{r}
+w <- rbinom(1e4, size = 200, prob = samples) # Some predictions 
+
+tibble(w) |> 
+  ggplot(aes(w)) +
+  geom_density() +
+  theme_pubr(border = TRUE) +
+  labs(x = "# boys",
+       title = "Simulations from posterior of 200 births",
+       caption = "Red vertical line indicates observed value from data") +
+  geom_vline(aes(xintercept = b), color = "red")
+
+```
+
+**The model seems to fit well. The observed number of male births is the peak or near the peak of the distribution.**
+
+### 3H4
+
+```{r}
+w <- rbinom(1e4, size = 100, prob = samples) # Some predictions 
+
+tibble(w) |> 
+  ggplot(aes(w)) +
+  geom_density() +
+  theme_pubr(border = TRUE) +
+  labs(x = "# boys",
+       title = "Simulations from posterior of 200 births",
+       caption = "Red vertical line indicates observed value from data") +
+  geom_vline(aes(xintercept = sum(birth1)), color = "red") 
+
+```
+
+**The model is not as good as before. The distribution of predicted number of boys out of 100 births is not centered around the observed value.**
+
+
+### 3H5
+```{r}
+girls <- which(birth1 == 0)
+n_girls <- length(girls)
+boys_2 <- sum(birth2[girls] == 1)
+
+
+w <- rbinom(1e4, size = n_girls, prob = samples) # Some predictions 
+
+tibble(w) |> 
+  ggplot(aes(w)) +
+  geom_density() +
+  theme_pubr(border = TRUE) +
+  labs(x = "# boys",
+       title = "Simulations from posterior of 200 births",
+       caption = "Red vertical line indicates observed value from data") +
+  geom_vline(aes(xintercept = boys_2), color = "red") 
+
+```
+
+**Even worse fit than before. The model is making predictions that look nothing like the data. So we can guess that the births are not independent. There is a negative correlation between the sex at first birth and second birth. Boys tend to follow girls and girls follow boys. Although in real data the correlation seems to be positive.**
+
+
+
+
+
