@@ -147,7 +147,60 @@ sum(w2 == 6)/1e4 # P of 8 waters in 15 tosses
 
 ### 3M6
 
-**Can't be done. There is not enough atoms in the universe.**
+**Can't be done. There is not enough atoms in the universe. (This was my original answer, a brainfart.)**
+
+**The actual answer (AFTER DEADLINE)**
+
+```{r}
+###--- Function that returns the 99% PI distance for n_trials (w/ 50% waters) 
+find_pi <- function(n_trials) {
+  
+  tbl <- grid_approx(W = n_trials/2, L = n_trials/2, grid_n = 1e4, plot = FALSE)
+  samples <- sample(tbl$p_water, prob = tbl$posterior_probability, size = 1e4, replace = TRUE)
+
+  lb <- quantile(samples, ((1 - .99)/2)) # lower bound
+  ub <- quantile(samples, ((1 - .99)/2 + .99)) # upper bound
+  dist <- as.numeric(ub - lb)
+  
+  return(dist)
+}
+
+
+
+###--- Basic Search Algorithm 
+search_for_pi <- function(target, precission){
+  
+  pi_dist <- find_pi(seed) # 99% PI Distance 
+  diff <- pi_dist - target_distance 
+  
+  if(abs(diff) < precission) {
+    print(paste("Finished. N trials =",seed,"99% PI dist:",round(pi_dist,4)))
+    #stop(call. = TRUE)
+  }
+  
+  else{
+    
+    if(diff > 0) seed <<- seed + 2
+    if(diff < 0) seed <<- seed - 2
+    
+    print(seed)
+    search_for_pi(target_pi,precission_pi) # Make it recursive
+  }
+}
+
+
+###--- Parameters
+set.seed(061295)
+target_pi <- .05 # Target
+precission_pi <- .0001 # Precission
+seed <- sample(1:1e3,1) # Initiate with random number
+seed <- ifelse(seed %% 2 == 1,seed - 1,seed)  # Only even numbers
+
+
+###--- Find n trials 
+search_for_pi(target_pi,precission_pi)
+
+```
 
 
 ### 3H1
