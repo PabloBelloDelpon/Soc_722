@@ -1,0 +1,463 @@
+---
+title: "Chapter 5 Practice"
+author: "Pablo Bello"
+date: "10/6/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+```{r}
+###--- Load libraries
+library(tidyverse)
+library(rethinking)
+library(janitor)
+library(dagitty)
+library(tidybayes.rethinking)
+library(ggpubr)
+library(patchwork)
+library(tidybayes)
+
+theme_set(theme_pubr(border = TRUE) +
+            theme(legend.title = element_blank()))
+```
+
+
+### 5E1
+2 and 4 are multiple regressions. 
+
+### 5E2
+
+$$
+\begin{aligned}
+AnimalDiv_i &\sim \textrm{Normal}(\mu_i,\sigma) \\ 
+\mu_i &= \alpha + \beta_lLatitude_i + \beta_pPlantDiv_i \\
+\alpha &= 0 \\
+\beta_l &\sim \textrm{Normal}(0,1) \\
+\beta_p &\sim \textrm{Normal}(0,1) \\
+\sigma &\sim \textrm{Uniform}(0,30)
+\end{aligned}
+$$
+
+
+### 5E3
+
+Let P be the time to Ph.D. degree, F the amount of funding, and S the size of the lab. Both beta coefficients are expected to be positive according to the description of the problem. None of the predictors is strongly associated with the outcome but together they are, due to a negative correlation between them. This can be due to negative influence from one to the other or a prior variable causing both.
+
+$$
+\begin{aligned}
+P_i &\sim \textrm{Normal}(\mu_i,\sigma) \\ 
+\mu_i &= \alpha + \beta_fF_i + \beta_sS_i \\
+\alpha &= 0 \\
+\beta_l &\sim \textrm{Lognormal}(0,1) \\
+\beta_p &\sim \textrm{Lognormal}(0,1) \\
+\sigma &\sim \textrm{Uniform}(0,30)
+\end{aligned}
+$$
+
+
+### 5E4
+All but (2) are inferentially equivalent. They key is that they should have 4 different parameters (as many as categories in the indicator variable) and that each one of these should be multiplied by 1 with a different category. Model (2) has 5 parameters instead.
+
+### 5M1
+For a sample of kids let S be their shoe size, C the number of comics they own, and A their age. If we take S as the outcome, it should be correlated both with C and with A. But the true DAG is S <- A -> C (as they grow older kids have more chances to buy comics (C) and their feet grow as well (S)). 
+
+### 5M2
+Let us imagine a sample of sociologists. Take scientific productivity (P) as an outcome. Then take the total number of books read (B) and the knowledge of stats (S) as predictors. In this case, B and S are correlated due to a prior variable, the disposition towards accumulating knowledge, or curiosity. But we can imagine the effect of B on P to be negative (reading books distracts you from producing papers). At the same time the effect of S on P can be positive (knowing more stats helps you produce papers). 
+
+### 5M3
+If divorce rates are high, there is a bigger marriage market at any given time, thus making the marriage rate increase. With cross-sectional data multiple regression cannot get at the causal relationship between them. Longitudinal data would make it feasible. 
+
+### 5M4
+```{r}
+# Load divorce data
+data(WaffleDivorce)
+tbl <- as_tibble(WaffleDivorce)
+
+# Load LDS data
+lds_tbl <- 
+  read_csv("week_6/LDS_state.csv") |> 
+  clean_names()
+
+# Clean up divorce data and join with lds data
+tbl <- 
+  tbl |> 
+  transmute(
+         state = Location,
+         divorce = standardize(Divorce),
+         marriage = standardize(Marriage),
+         age_marriage = standardize(MedianAgeMarriage)) |> 
+  left_join(lds_tbl) |> 
+  drop_na() |> 
+  mutate(
+    log_mormon = log(mormon_rate),
+    mormon_rate = (mormon_rate - mean(mormon_rate))/sd(mormon_rate),
+    log_mormon = standardize(log_mormon))
+
+
+# Model
+# Predict divorce rate using: 
+  #-Marriage Rate
+  #-Median age at marriage
+  #-Percet LDS population
+
+model <- alist(
+  divorce ~ dnorm(mu,sigma),
+  mu <- alpha + beta_m * marriage + beta_a * age_marriage + beta_r * mormon_rate,
+  alpha ~ dnorm(0, .2),
+  beta_m ~ dnorm(0, .5),
+  beta_a ~ dnorm(0, .5),
+  beta_r ~ dnorm(0, .5),
+  sigma ~ dexp(1)
+)
+
+model_f <- quap(model,data = tbl)
+precis(model_f)
+
+```
+
+The parameter for Mormon rate is negative with a mean of -.32 and .12 sd. States with a high proportion of Mormons have lower divorce rates once marriage rates and median age at marriage are taken into account.
+
+### 5M5
+
+Let us name the price of gas a G,  obesity as O, exercise as E, and eating out as X. Then assume the following DAG is true.
+
+```{r}
+###--- Drawing a DAG
+dag <- dagitty("dag{G->X;G->E;X->O;E->O}")
+coordinates(dag) <- list(x=c(G=1,X=0,E=2,O=1),y=c(G=0,X=1,E=1,O=2))
+drawdag(dag)
+
+####--- Impliead conditional independencies
+impliedConditionalIndependencies(dag)
+```
+
+
+The DAG assumes that the price of gas has only an indirect effect on obesity, either through excercise or through less eating out. There are two conditional independencies implied. E is independent of X given G (because that's their prior). G is independent of O given E and X. to test this causal model I would run two regression models. First one in which G,X and E predict O. In that model, I would expect the effect of G to be null, the effect of X to be negative, and the effect of E to be positive.  Second, I would run a regression with X as outcome and E and G as predictors. In a bivariate correlation E and X would be negatively correlated, but in this regression the effect of E on X should be null because we include G (their prior). 
+
+```{r}
+###--- Markov Equivalence
+MElist <- equivalentDAGs(dag)
+drawdag(MElist)
+```
+
+
+We can see that the markov equivalence contains three DAGs, the proposed one and two more. However, the other two are unlikely as gas prices (G) are probably not affected by either eating out more or the amount of exercise people do. Although one can think of eating out increasing gas prices if that practice was to significantly increase the demand for gas.  
+
+
+### 5H1
+```{r}
+###--- Define the Dag
+dag <- dagitty("dag{M->A;A->D}")
+
+###--- Implied conditional independencies
+impliedConditionalIndependencies(dag)
+```
+
+Given this DAG, D is independent of M given A. We would test this by running a model with D as outcome and M and A as predictors. If the affect of M is null then that conditional independency would hold. 
+
+```{r}
+###--- Define the model
+model <- alist(
+  divorce ~ dnorm(mu,sigma),
+  mu <- alpha + beta_m * marriage + beta_a * age_marriage,
+  alpha ~ dnorm(0, .2),
+  beta_m ~ dnorm(0, .5),
+  beta_a ~ dnorm(0, .5),
+  sigma ~ dexp(1)
+)
+
+###--- Fit the model
+model_f <- quap(model,data = tbl)
+precis(model_f)
+```
+
+In the model beta_m (the effect of marriage on divorce conditional on median age at marriag) is close to 0, so the data is consistent with the DAG. However, there other DAGs with the same conditional independencies that are plausible, so our statistical model cannot allocate between them. One could reason which one of these DAGs is more likely to be true if this was individual level data, but the fact that it is aggregated makes it more complicated to define plausible and non-plausible causal paths. 
+
+```{r}
+###--- Markov Equivalence
+MElist <- equivalentDAGs(dag)
+drawdag(MElist)
+```
+
+### 5H2
+
+```{r}
+N <- 1000
+
+###--- Define the model
+model_2 <- alist(
+  ###--- A->D
+  divorce ~ dnorm(mu_d,sigma_d),
+  mu_d <- alpha_d + beta_a * age_marriage,
+  alpha_d ~ dnorm(0, .2),
+  beta_a ~ dnorm(0, .5),
+  sigma_d ~ dexp(1),
+  
+  ###--- M->A
+  age_marriage ~ dnorm(mu_a,sigma_a),
+  mu_a <- alpha_a + beta_m * marriage,
+  alpha_a ~ dnorm(0, .2),
+  beta_m ~ dnorm(0, .5),
+  sigma_a ~ dexp(1)
+  
+)
+
+###--- Fit the model 
+model_2f <- quap(model_2,data = tbl)
+precis(model_2f)
+
+
+###--- Get some draws from the posterior
+post_draws <- 
+  tidy_draws(model_2f,n = nrow(tbl)*N*2) |> 
+  select(!starts_with("."))
+
+###--- Create a tibble with real and counterfactual values 
+
+  ###--- I need to de-estandardize first, then standardize w the same sd and mean.
+  d <- as_tibble(WaffleDivorce)
+  mean <- mean(d$Marriage)
+  sd <- sd(d$Marriage)
+  
+  counter_tbl <- 
+    tbl |> 
+    select(marriage) |> 
+    mutate(counter_marriage = marriage * sd + mean, # de-estandardize
+           counter_marriage = counter_marriage/2, # Divide by two
+           counter_marriage = (counter_marriage - mean)/sd) |> # Standardize again on   the same scale
+    pivot_longer(cols = c(marriage, counter_marriage),names_to = "type",values_to = "marriage_rate")
+
+
+  ###--- Check real and counterfactual 
+  counter_tbl |> 
+    ggplot(aes(marriage_rate, fill = type)) +
+    geom_density(alpha = .4) +
+    labs(title = "Observed and counterfactual distribution of marriage rates",
+         x = "Marriage Rate (std)")
+
+  ###--- Make predictions
+  pred_tbl <- 
+    counter_tbl |> 
+    mutate(id = row_number()) |> 
+    uncount(N) |> 
+    bind_cols(post_draws) |>
+    rowwise() |> 
+    mutate(age_m_pred = rnorm(1,alpha_a + beta_m * marriage_rate,sigma_a),
+           divorce_pred = rnorm(1,alpha_d + beta_a * age_m_pred, sigma_d))
+ 
+
+ ###--- Effect on age predictions
+  p1 <- 
+    pred_tbl |> 
+    select(age_m_pred,type) |> 
+    group_by(type) |> 
+    mutate(mean = mean(age_m_pred)) |> 
+    ggplot(aes(age_m_pred, group = type, fill = type, color = type)) +
+    geom_density(alpha = .4) +
+    geom_vline(aes(xintercept = mean, color = type),show.legend = FALSE) +
+    labs(title = "Pred. Dist. of Median Age at Marriage",
+         x = "Median Age at Marriage (std)")
+
+
+
+  ###--- Effect on divorce rates
+  p2 <- 
+    pred_tbl |> 
+    select(divorce_pred,type) |> 
+    group_by(type) |> 
+    mutate(mean = mean(divorce_pred)) |> 
+    ggplot(aes(divorce_pred, group = type, fill = type, color = type)) +
+    geom_density(alpha = .4) +
+    geom_vline(aes(xintercept = mean, color = type), show.legend = FALSE) +
+    labs(title = "Pred. Dist. of Divorce Rates",
+         x = "Divorce Rates (std)")
+  
+  ###--- Plot them together
+  p1 + p2 
+  #+ patchwork::plot_layout(nrow = 2)
+
+```
+
+
+
+
+
+### 5H3
+
+```{r}
+
+###--- Load the milk data
+  data(milk)
+  
+  tbl <- 
+    milk |> 
+    as_tibble() |> 
+    clean_names() |> 
+    transmute(
+           kcal = standardize(kcal_per_g),
+           neo = standardize(neocortex_perc),
+           mass = standardize(mass)) |> 
+    drop_na()
+
+
+###--- Now both mass and neocortex as predictors
+  model <- alist(
+    ###--- mass->Kcal<-neo
+    kcal ~ dnorm(mu_k,sigma_k),
+    mu_k <- alpha_k + beta_n * neo + beta_m * mass,
+    alpha_k ~ dnorm(0,.2),
+    beta_n ~ dnorm(0,.5), 
+    beta_m ~ dnorm(0,.5),
+    sigma_k ~ dexp(1),
+    
+    ###--- mass -> neo
+    neo ~ dnorm(mu_n,sigma_n),
+    mu_n <- alpha_n + beta_m2 * mass,
+    alpha_n ~ dnorm(0,.2),
+    beta_m2 ~ dnorm(0,.5),
+    sigma_n ~ dexp(1)
+  
+  )
+
+###--- Fit the model
+  model_f <- quap(model, data = tbl)
+  precis(model_f)
+
+###--- Get some draws from the posterior
+  post_draws <- 
+    tidy_draws(model_f,n = nrow(tbl)*N*2) |> 
+    select(!starts_with("."))
+
+
+###--- Construct a tibble w counterfactuals
+  d <- as_tibble(milk)
+  mean <- mean(d$mass)
+  sd <- sd(d$mass)
+  
+  counter_tbl <- 
+    tbl |> 
+    select(mass) |> 
+    mutate(counter_mass = mass * sd + mean, # de-estandardize
+           counter_mass = counter_mass*2, # Multiply by two
+           counter_mass = (counter_mass - mean)/sd) |> # Standardize again on   the same scale
+    pivot_longer(cols = c(mass, counter_mass),names_to = "type",values_to = "mass")
+
+###--- Check real and counterfactual 
+  counter_tbl |> 
+    ggplot(aes(mass, fill = type)) +
+    geom_density(alpha = .4) +
+    labs(title = "Observed and counterfactual distribution of mass",
+         x = "Mass (std)")
+
+  
+  
+###--- Make predictions
+  pred_tbl <- 
+    counter_tbl |> 
+    mutate(id = row_number()) |> 
+    uncount(N) |> 
+    bind_cols(post_draws) |>
+    rowwise() |> 
+    mutate(neo_pred = rnorm(1,alpha_n + beta_m2 * mass,sigma_n),
+           kcal_pred = rnorm(1,alpha_k + beta_n * neo_pred + beta_m * mass, sigma_k))
+ 
+
+ ###--- Effect of doubling mass on neo cortex percentage
+  p3 <- 
+    pred_tbl |> 
+    select(neo_pred,type) |> 
+    group_by(type) |> 
+    mutate(mean = mean(neo_pred)) |> 
+    ggplot(aes(neo_pred, group = type, fill = type, color = type)) +
+    geom_density(alpha = .4) +
+    geom_vline(aes(xintercept = mean, color = type),show.legend = FALSE) +
+    labs(title = "Pred. Dist. of Neocortex Percent",
+         x = "Neocortex perc. (std)")
+
+
+
+  ###--- Effect of doubling mass on kcal in milk (direct and indirect effect)
+  p4 <- 
+    pred_tbl |> 
+    select(kcal_pred,type) |> 
+    group_by(type) |> 
+    mutate(mean = mean(kcal_pred)) |> 
+    ggplot(aes(kcal_pred, group = type, fill = type, color = type)) +
+    geom_density(alpha = .4) +
+    geom_vline(aes(xintercept = mean, color = type),show.legend = FALSE) +
+    labs(title = "Pred. Dist. of Kcal",
+         x = "Kcal per gram (std)")
+    
+  ###--- Put them together
+  p3 + p4
+```
+
+
+
+ The direct effect of mass on kcal is negative but the indirect effect is positive. Mass has a positive effect on neocortex  and neocortex has a positive effect on kcal in milk. As we can see the result is that the predicted mean of the distribution of kcal per gram of milk is a bit lower when we double mass but not so much so (because of the counteracting indirect effect). 
+
+
+
+### 5H4
+
+I think "southerness" could have a direct effect on all three of these variables. People in the south would tend to get married earlier (S -> A), more people would get married (S -> M) and, all else equal, less likely to get a divorce (S -> D). If this was true, southerness would have a direct effect on divorce rates and two indirect effects. But in this model there would be no new conditional independencies to test (because S would have an effect on every other variable).
+
+
+For the sake of the exercise I will assume S does not have a direct effect on D. From previous models we know that D is independent of M given A, so I omit that arrow. The resulting model is presented as a DAG. Given this model, we should observe two conditional independencies. D is independent of M given A, which we have proved before. D is independent of S given A, which we have not tested, so I will do that. 
+
+
+```{r}
+###--- DAG 2
+dag <- dagitty("dag{S->M;A->M;A->D;S->A}")
+coordinates(dag) <- list(x=c(S=1,M=0,A=2,D=1),y=c(S=0,M=1,A=1,D=2))
+drawdag(dag)
+
+####--- Impliead conditional independencies
+impliedConditionalIndependencies(dag)
+
+
+###--- Test implications of the model
+  ###--- Load the data  again
+  data(WaffleDivorce)
+  tbl <- 
+    WaffleDivorce |> 
+    as_tibble() |> 
+    transmute(
+           state = Location,
+           divorce = standardize(Divorce),
+           marriage = standardize(Marriage),
+           age_marriage = standardize(MedianAgeMarriage),
+           south = South) |> 
+    drop_na()
+  
+   
+  ###--- Let's test the conditonal independence of D on S given A
+  model <- alist(
+    divorce ~ dnorm(mu,sigma),
+    mu <- alpha + beta_a * age_marriage + beta_s * south,
+    alpha ~ dnorm(0, .2),
+    beta_a ~ dnorm(0, .5),
+    beta_s ~ dnorm(0, .5),
+    sigma ~ dexp(1)
+  )
+
+  model_f <- quap(model,data = tbl)
+  precis(model_f)
+  
+```
+
+
+According to the model, D is in fact independent of S given A, which is consistent with our DAG. Let's not forget that other DAGs are also consistent with the information we have gathered from the data. However,  if we restrict S to not be affected by other variables (being a prior), there is just one other equivalent option. 
+
+```{r}
+###--- Markov Equivalence
+MElist <- equivalentDAGs(dag)
+drawdag(MElist)
+```
+
+
+
+
