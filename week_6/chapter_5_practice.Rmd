@@ -450,7 +450,7 @@ impliedConditionalIndependencies(dag)
 ```
 
 
-According to the model, D is in fact independent of S given A, which is consistent with our DAG. Let's not forget that other DAGs are also consistent with the information we have gathered from the data. However,  if we restrict S to not be affected by other variables (being a prior), there is just one other equivalent option. 
+In the model S has a positive effect on D, but it is small in relation to it's sd (beta_s). So it is likely to be 0 or close to 0. If we assume that beta_s is too close to 0 to take it into account D is then independent of S given A, which is consistent with our DAG. Let's not forget that other DAGs are also consistent with the information we have gathered from the data. However,  if we restrict S to not be affected by other variables (being a prior), there is just one other equivalent option. 
 
 ```{r}
 ###--- Markov Equivalence
