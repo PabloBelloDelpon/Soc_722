@@ -1,0 +1,126 @@
+---
+title: "Chapter 6 Practice"
+author: "Pablo Bello"
+date: "10/14/2022"
+output: html_document
+---
+\newcommand{\indep}{\perp \!\!\! \perp}
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(rethinking)
+```
+
+
+### 6E1
+
+Multicollinearity, post-treatment bias, and collider bias. 
+
+### 6E2
+
+Suppose you want to estimate the effect of having a friend (on Twitter) posting a newspaper article (treatment) on your likelihood to post that same article on your feed (outcome). However, because dyads of friends tend to be similar in many characteristics between them, it is likely that any two friends follow the same newspapers on Twitter, and so they end up posting about the same things on their feeds. So you want to have treatment and controls that follow the same newspapers. But if you are using cross-sectional data this would lead to pos-treatment bias. Being exposed to some newspaper article changes your likelihood of following their twitter account, and that in turn affects your chances of posting one of their articles. Thus, you would mute the effect treatment on the outcome by blocking a mediator path. 
+
+### 6E3
+
+For the the fork and the pipe:( Following the book's notation) X is independent of Y conditional on Z. The collider only has  a conditional dependency (X is independent of Y, but dependent on it conditional on Z). For the descendant, adjusting for D is like adjusting on Z, but it's conditional independencies depend on how X and Y are arranged. 
+
+### 6E4
+
+Conditioning on a collider is equivalent to a selection process where the variable we select on conveys information about X and Y. Even if X and Y are independent, once we select on a common consequence of them, they become dependent. A biased sample is a sample that has undergone some selection on a variable that conveys information for X and Y. In the case of conditioning on a collider, instead of making that selection by systematically excluding cases from the sample, we adjust for that variable, creating the same effect. Within levels of a collider, X and Y are dependent, even if they are not across the whole sample. 
+
+### 6M1
+
+There are five paths from X to Y. A direct one, and four backdoor paths. Two of the backdoor paths are the same as for the previous graph, one of which we want to close by conditioning on A or C, the other one has a collider so it is closed (all this is included in the text of the book so I don't give more details here). The new backdoor paths are: (1) X <- U <- A -> C <- V -> Y and (2) X <- U <- A -> C -> Y. In (1) C is a collider so the path is closed. (2) is open. Because C is a collider on path (1) you would not want to control for it. So we are left with A as a control, which closes both the open path described in the book and path (2) described here. 
+
+### 6M2
+
+```{r}
+###--- Regular specification (according to problem)
+set.seed(061295)
+N <- 1000
+
+###--- "real coefficients"
+b_XZ <- 3
+b_ZY <- 1
+
+###--- Build the data
+tbl <- 
+  tibble(
+  X = rnorm(N),
+  Z = rnorm(N,X*b_XZ),
+  Y = rnorm(N,Z*b_ZY)) 
+
+
+###--- Define the model
+model_1 <- alist(
+  Y ~ dnorm(mu,sigma),
+  mu <- alpha + beta_x * X + beta_z * Z,
+  alpha ~ dnorm(0,.2),
+  beta_x ~ dnorm(1,2),
+  beta_z ~ dnorm(1,2),
+  sigma ~ dexp(1)
+)
+
+###--- Fit the model
+model_1f <- quap(model_1,data = tbl)
+
+###--- Model coefficients
+precis(model_1f)
+```
+
+
+
+In this model, X and Z are highly correlated. In the leg example, both the left and right leg are the same function of height plus some random error. Here, however, Z is a function of X and Y a function of Z. Thus, knowing Z, Y is independent of X (coefficient is 0) but that does not affect the coefficient for Z, which has a direct effect on Y independent on X. There is no multicollinearity in this model (the coefficients are correctly estimated). 
+
+
+Because this concept is still not too obvious to me I tried to visualize how the relationship between X and Z becomes weaker as we condition on Y. What the following plot shows is simply that X and Z are perfectly correlated, but as we better condition on Y (by increasing the number of quantiles in which we divide it) the regression lines between X and Z become flat (look at center lines, where most data is concentrated). In other words, although X and Z are perfectly correlated by design, conditional on Y this correlation shrinks. 
+
+```{r}
+###--- Build the data
+N <- 300
+tbl <- 
+  tibble(
+  X = rnorm(N),
+  Z = rnorm(N,X*b_XZ),
+  Y = rnorm(N,Z*b_ZY)) 
+
+plot_list <- 
+  tbl |> 
+  uncount(6,.id = "id") |> 
+  group_by(id) |> 
+  mutate(Y2 = ntile(Y, n = id)) |> 
+  group_by(id) |> 
+  group_split() |> 
+  lapply(function(x){
+    x |> 
+  ggplot(aes(X,Z, color = Y)) +
+  geom_point(alpha = .2) +
+  geom_smooth(method = "lm",se = FALSE, aes(group = Y2)) +
+  theme(legend.position = "none")
+  })
+  
+
+cowplot::plot_grid(plotlist = plot_list)
+
+```
+
+
+
+### 6M3
+
+Upper-left DAG. There are two backdoor paths from X to Y (and the direct path). (1) X <- Z -> Y and (2) X <- Z <- A -> Y. Both are open so to close we we would have to condition on Z. 
+
+Lower-left DAG. There are two paths in this case (besides the direct path). (1) X <- A -> Z <- Y and (2) X -> Z <- Y. (1) is a backdoor path, (2) is not. Both are closed because Z is a collider, so there is no need to condition. 
+
+Upper-right DAG. There are two paths from X to Y (besides the direct path). (1) X -> Z -> Y and (2) X -> Z <- A -> Y. Neither of them is a backdoor. (1) is open and (2) is closed. If we want to estimate the total effect of X on Y we should not condition on anything. The direct effect cannot be estimated without bias, since Z is both a mediator and a collider. 
+
+Lower-right DAG. Again there are two paths from X to Y (besides the direct path). (1) X <- A -> Z -> Y and (2) X -> Z -> Y. (1) is a backdoor and it is open so we should condition on A or Z to close it. If we condition on Z we would get the direct effect of X on Y as Z is a mediator. If we condition on A we would get the total effect of X on Y. 
+
+
+
+
