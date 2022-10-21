@@ -1,0 +1,278 @@
+---
+title: "Chapter 7 Practice"
+author: "Pablo Bello"
+date: "10/21/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+
+```{r}
+library(tidyverse)
+library(rethinking)
+library(ggpubr)
+library(patchwork)
+theme_set(theme_pubr(border = TRUE))
+```
+
+### 7E1 
+
+Information entropy is a measure of uncertainty. The three stated desiderata for a measure of uncertainty are. (1) That it should be continuous. It would be paradoxical to measure information entropy in a scale that obscures information (a discrete scale) as compared to how the world is presented to our eyes, as a continuum (or so says Durkheim). (2) Uncertainty should increase as the number of possible events increases. Everything else being equal, if there is more possibilities we should be less certain of which one will happen. (3) Uncertainty should be additive. If this wasn't the case then adding two events would be more or less uncertain than the sum of its parts. In sociology, this would be akin to Durkheim's vision of society. The uncertainty about the social is more than the sum of the uncertainty about the actions of the individuals that are part of it. We don't want that for our models, and probably neither for our theories. 
+
+
+### 7E2
+
+$H(p) = -Elog(p_i) = -\sum p_i log(p_i) = - (.3 \cdot log(.3) + .7 \cdot log(.7) \approx .611$
+
+
+
+### 7E3
+
+```{r}
+###--- Probabilities
+p <- c(.2, .25, .25, .3)
+
+###--- Information Entropy
+- sum(p*log(p))
+
+```
+
+### 7E4
+
+Probabilities shoul add to 1, otherwise what happens 30% of the times when before it would show 4? Assuming that:
+
+```{r}
+###--- Probabilities
+p <- c(.2, .25, .25)
+p <- p/sum(p)
+###--- Information Entropy
+- sum(p*log(p))
+
+```
+
+Now entropy is lower, as there is one event less than before. 
+
+
+### 7M1
+
+$AIC = -2lppd + 2p$  where lppd is the log pointwise predictive density and p the number of free parameters in the posterior.
+
+$WAIC(y|\theta) = -2(lppd - \sum\limits_{i}var_\theta \log p(y_i|\theta))$ where $\theta$ is the posterior distribution.  
+
+So both AIC and WAIC have two parts. One is the bayesian version of the log-probability score. It uses the whole posterior instead of a point estimate. So both AIC and WAIC go down as the likelihood for the observed outcome (y) given the posterior (theta) increases. The other element of these formulae is a penalty. For AIC the penalty is twice the number of parameters. The more complex the model is the higher the AIC. This is because, under some conditions, 2 times the number of parameters is a good approximation to the difference between in-sample and out-of-sample deviance. The conditions are (1) flat or flattish priors, (2) a multivariate Gaussian posterior, and (3) a sample size much larger than the number of parameters. WAIC makes no assumptions about the shape of the posterior, so it is more general. Thus, assuming a Gaussian posterior we can use AIC instead of WAIC. 
+
+### 7M2
+
+In model selection we use some criteria to score models and pick the one that performs better on it. By doing that we lose information on how much better this model does than the other candidates, which might be much better or just marginally better. In model comparisson, we also score models on some criterion but present them all. 
+
+### 7M3
+When computing WAIC, lppd is the sum for each point of the log of their likelihood given the posterior. So the more points (observations) the larger the lppd. The other element of WAIC is the penalty, which is the variance for each point of log-likelihoods for a set of parameter draws. 
+
+
+```{r, cache = TRUE, warning = FALSE}
+
+###--- Population size
+N <- 1e3
+
+###--- Sample sizes
+sample_size <- c(20,50,100,1000)
+
+
+###--- Effects
+b1 <- .5
+b2 <- .7
+
+###--- Data
+tbl <- 
+  tibble(x1 = rnorm(N),
+         x2 = rbern(N,prob = .2),
+         y = rnorm(N,b1*x1 + b2*x2 + rnorm(N,0,.2)))
+
+
+
+###--- Define the model
+model <- alist(
+  y ~ dnorm(mu,sigma),
+  mu <- alpha + beta1 * x1 + beta2 * x2,
+  alpha ~ dnorm(0,.2),
+  beta1 ~ dnorm(0,1),
+  beta2 ~ dnorm(0,1),
+  sigma ~ dexp(1)
+)
+
+
+###--- Fit the model for each sample size
+sim <- 
+  lapply(sample_size, function(n){
+  
+  ###--- Sample the population
+  data <- 
+    tbl |> 
+    slice_sample(n = n)
+  
+  ###--- Fit the model to the sample
+  model_f <- quap(model,data = data)
+  
+  ###--- WAIC
+  waic <- WAIC(model_f, pointwise = TRUE)
+  
+  res <- tibble(waic = list(waic), model_fit = list(model_f))
+  
+  return(res)
+}) |> 
+  bind_rows(.id = "model")
+
+
+###--- WAIC model comparisson
+models <- sim |> pull(model_fit) 
+waic <- compare(models[[1]], models[[2]], models[[3]], models[[4]],func = "WAIC")
+
+as_tibble(waic) |>
+  mutate(Model = paste("Model with n =", sample_size)) |>
+  relocate(Model)
+
+
+###--- Pointwise
+waic_p <- 
+  sim |> 
+  select(-model_fit) |> 
+  unnest(waic) |> 
+  group_by(model) |> 
+  mutate(model = as_factor(paste("Model with n =", n())))
+
+waic_p |> 
+  group_by(model) |>
+  summarise(- mean(lppd), mean(penalty))
+  
+```
+
+
+If we look at the results of the simulations we can see that: (1) WAIC increases with sample size as expected because it adds lppd instead of averaging it across points. (2) Excluding sample variation, the average lppd is the same across models. Bayesian models give us the optimal posterior given the observations, so conditional on using the same model specification, the average likelihood of seeing the data given the posterior should be about the same for random samples of the same population (independent of sample size). The penalty, however, decreases with sample size. As the information for the model increases its precision estimating the parameters increases as well, so lppd are distributed around the same mean, but the variance decreases. 
+
+I'm still trying to fully grasp this, but I think another way to think about it is as bias and variance. The first term of WAIC (the sum of the log-likelihoods) is related to pointwise prediction bias, and the second term (the penalty) is related to pointwise prediction variance. So for a given model and population, we wouldn't expect in-sample prediction bias to change with sample size (this is what the stability of the average log-likelihood indicates). However, we do expect the variance in pointwise predictions to decrease as sample size increases (which explains the shrinkage in the average penalty). 
+
+
+### 7M4
+
+(1) AIC uses the number of parameters to approximate out-of-sample deviance because the difference between in-sample and out-of-sample deviance tends to be about twice the number of parameters in a model (for some mathematical reason unbeknownst to me). By analogy,the penalty used by WAIC to make a similar approximation (to out-of-sample deviance) is also called "effective number of parameters" but it isn't. It's the variance of the log-likelihood. 
+
+(2) The bayesian version of regularization (tightening the priors around 0) has two effects. The intented effect is to force the parameters to be closer to 0 (see figure below panel A). The not-so-intended effect is to tighten the posterior around the parameter mean (i.e. smaller variance for parameters) (figure panel B). So regularized models put less confidence on the data and more on their estimates. 
+
+
+(3) Because the penalty in WAIC measures the variance of the probability of observing the data given a set of parameters samples from the posterior, the narrower the posterior the narrower these likelihoods will be distributed. This is the case even if the log-likelihoods are high because the model is just wrong (for instance by heavily underfitting the data). In that case, the first term of WAIC will be higher because the model does biased predictions, but the second term (the penalty or "effective number of parameters") will be low because variance in pointiwse predictions will be low (see panel C of figure below).  
+
+
+```{r, cache = TRUE, warning = FALSE}
+###--- Fit models with a set of loose and tight priors
+  variance_prior <- seq(.1,2,.05)
+  
+  ###--- Small sample of the data 
+  set.seed(061295)
+  tbl_small <- 
+    tbl |> 
+    slice_sample(n = 20)
+  
+  
+  ###--- Define the model
+  model <- alist(
+      y ~ dnorm(mu,sigma),
+      mu <- alpha + beta1 * x1 + beta2 * x2,
+      alpha ~ dnorm(0,.2),
+      beta1 ~ dnorm(0,v_p),
+      beta2 ~ dnorm(0,v_p),
+      sigma ~ dexp(1)
+    )
+  
+  
+  ###--- Fit models with different variance for the priors
+  res <- list()
+  
+  for(i in 1:length(variance_prior)) {
+      
+      v_p <- variance_prior[i]
+      model_f <- quap(model,tbl_small)
+      model_params <- precis(model_f)
+      
+      ###--- Extract sd of the beta parameters
+      beta_sd <- model_params[2:3,2]
+      beta_p <- model_params[2:3,1]
+      ###--- Compute WAIC
+      waic <- WAIC(model_f)
+      
+      
+      res[[i]] <- 
+        tibble(
+             variance_prior = v_p,
+             beta1_sd = beta_sd[1],
+             beta2_sd = beta_sd[2],
+             beta_1 = beta_p[1],
+             beta_2 = beta_p[2],
+             penalty = waic$penalty,
+             waic = waic$WAIC)
+      
+    }
+  
+  
+  res <- bind_rows(res)
+```
+
+
+```{r}
+
+###--- Visualize the results from the simulations in previous chunk
+
+  ###--- Mean of priors and sd of posterior
+  p1 <- 
+    res |> 
+    pivot_longer(cols = c(beta_1,beta_2),names_to = "beta",values_to = "value") |> 
+    ggplot(aes(variance_prior,value,color = beta)) +
+    geom_line() + 
+    labs(
+      title = "Parameter means by var. of priors",
+      x = "Variance of Priors",
+      y = "Mean param. estimates")
+  
+  
+  
+  
+  ###--- Variance of priors and sd of posterior
+  p2 <- 
+    res |> 
+    pivot_longer(cols = c(beta1_sd,beta2_sd),names_to = "beta",values_to = "sd") |> 
+    mutate(beta = ifelse(beta == "beta1_sd", "sd of Beta 1","sd of Beta 2")) |> 
+    ggplot(aes(variance_prior,sd, color = beta)) +
+    geom_line() +
+    labs(title = "SD of params. by var. of priors",
+         color = "",
+         x = "Variance of Priors",
+         y = "sd param. estimates")
+  
+  ###---- Penalty by variance of priors
+  p3 <- 
+    res |> 
+    ggplot(aes(variance_prior,penalty)) +
+    geom_point() +
+     labs(title = "Penalty by var. of priors",
+          x = "Variance of Priors",
+          y = "WAIC Penalty")
+  
+  
+(p1 + p2) / p3
+```
+
+
+### 7M5
+
+Informative priors constrain the parameter search to a narrower set of values. That impedes the model to learn too much from the data. In other words, it constrains the model, which prevents the model from snugly fitting the data.
+
+### 7M6
+
+By restricting the search space for parameters, informative priors make the model more likely to fall into parameters that do not correspond to the data. We can think of overfitting and underfitting as a continuum, the more the model learns from the data the more we tend to overfit, the less we learn from data the more we underfit. 
+
+
+
+
+
