@@ -1,0 +1,282 @@
+---
+title: "Practice Chapter 8"
+author: "Pablo Bello"
+date: "10/28/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+
+```{r}
+library(tidyverse)
+library(ggpubr)
+library(rethinking)
+library(tidyverse)
+library(brms)
+library(tidybayes)
+library(modelsummary)
+library(patchwork)
+
+theme_set(theme_pubr(border = TRUE))
+set.seed(061295)
+```
+
+
+### 8E1
+
+- **Bread dough rises because of yeast.** The effect of yeast on bread dough depends on the presence or absence of air. 
+
+- **Education leads to higher income.** For people with employment education has a positive effect on income. For unemployed people, education has no relationship to income. 
+
+- **Gasoline makes a car go.** Gasoline's effect on a car is conditional on the presence of wheels. No wheels no go. 
+
+### 8E2
+
+There are several ways to interpret the statements but according to one of them, they all indicate an interaction. (I'll just repeat my answer in the forum here). 
+Each statement seems to have three propositions (variables that can only take two values, TRUE or FALSE). You either caramelize the onions or you don't, you either go fast or slow... On each statement, the first one is the outcome and the other two are the predictors (a.ka. independent variables). Each statement also has one operator (OR, AND).
+
+When the operator is AND the interaction is positive. For instance:
+
+H (low Heat) and not D (Dry out) then C (Caramelized onions)
+
+So H or D do not have an independent effect on C, but together they do (thus there is a positive interaction).
+
+If the operator is OR then the interaction is negative.
+
+P (Parents) OR F (Friends) then B (political Beliefs).
+
+If either of those happens then B follows. Meaning that both have an independent effect on B. If both P and F are true then B also follows, but one of them is unnecessary for that to happen. So these effects are subadditive (or not additive at all), thus the interaction is negative.
+
+### 8E3
+
+The statements with AND (so 1) can be modeled with just an interaction effect $log(\frac{P}{1 - P}) = \beta H_i D_i$. That is the logit of the probability of the onions getting caramelized is a multiplicative function of low heat and drying out. 
+
+For the statements with OR (2,3 and 4), we need the main effects as well as the interaction. The formula is the same for all three so I'll use (4) as an example: 
+$log(\frac{P}{1 - P}) = \beta_sS_i + \beta_aA_i + \beta_{sa} S_i A_i$
+
+So, across a sample of species, the probability of being intelligent is a function of their sociability and the presence of manipulative appendages. The interaction then plays the role of turning down the main effects when both S and A are TRUE.
+
+
+### 8M1
+
+The question states that hot weather cancels the positive effect of water and light on blooms. In terms of interactions, this means that the model should have two extra interactions, one of light with weather temperature and light with water temperature.
+
+### 8M2
+
+Let's define the expected bloom size as:
+$\mu_i = \alpha + \beta_sS_i + \beta_wW_i + \beta_tT_i + \beta_{st}S_iT_i + \beta_{wt}W_iT_i$ 
+
+where $S_i$ is the amount of shade for observation $i$ and $W_i$ the amount of water. $T_i$ is an indicator variable that takes the value of 1 if the temperature is hot, and 0 otherwise. The two other terms are interactions between temperature and shade and temperature and water. Then, if:
+
+$$
+\begin{aligned}
+\beta_t &= -\alpha \\
+\beta_{st} &= -\beta_s \\
+\beta_{wt} &= -\beta_w
+\end{aligned}
+$$
+
+If those three conditions are met, then whenever the temperature is hot, the expected blooming size would be 0. 
+
+
+### 8M3 
+
+Let's say there are two things Ravens do all day, eat and hoard shiny objects. As explained in the question, the amount of wolves in the area has a positive effect on the number of ravens, because they can feed off their leftovers. However, because ravens also like to hoard, the amount of shiny objects around also entices ravens to migrate to an area. However, because the ravens'  priority is to eat, when food is scarce, the number of shiny objects doesn't matter much. It is only when food is abundant that having objects to hoard starts to become important for the ravens' life satisfaction. Let's further assume that the number of wolves and the number of shiny objects around are positively related (because shepherds need to keep knives around in case the wolves come to eat their sheep).  
+
+
+```{r}
+###--- Simulated data
+
+###--- Params
+intercept <- 10 # Some lost ravens that you would expect to find anywhere
+b_w <- 1.2 # Every wolf can sustain more than one raven with their leftovers
+b_s <- .1 # Shiny things attract ravens but they are not as enticing as food
+b_ws <- .004 # Interaction between shiny objects and wolves
+
+###--- Generate some data
+n <- 1e3 # Number of observations
+
+tbl <- 
+  tibble(
+  n_wolves = sample(0:200, n, 
+                    replace = TRUE, 
+                    prob = seq(1,0,length.out = 201)),
+  shiny_objects = n_wolves + rnorm(n,10,5)) |> 
+  mutate(n_ravens = intercept + 
+           b_w * n_wolves + 
+          # b_s * shiny_objects +
+           b_ws * n_wolves * shiny_objects + 
+           rnorm(n,.4,1)) |> 
+  mutate(n_ravens = ifelse(n_ravens < 0, 0, n_ravens))
+
+
+###--- Relationship between shiny objects and number of ravens
+(plot1 <- 
+  tbl |> 
+  ggplot(aes(shiny_objects,n_ravens)) +
+  geom_point() + 
+  geom_smooth(method = "lm" ,formula = y ~ poly(x, 2, raw=TRUE)) +
+  labs(title = "Relationship between the number of shiny objects and the number of ravens"))
+
+
+###--- 
+(plot2 <- 
+  tbl |> 
+    mutate(n_wolves = ntile(n_wolves,n = 10)) |>
+    #mutate(shiny_objects = ntile(shiny_objects,n = 10)) |>
+    ggplot(aes(shiny_objects,n_ravens)) +
+    geom_point() +
+    geom_smooth(method = "lm" ,formula = y ~ x,se = TRUE) +
+    facet_wrap(~ n_wolves) +
+    labs(title = "Effect of shiny objects on ravens across quantiles of wolf pop. size"))
+
+
+
+```
+
+
+So what looks like a hard-to-explain quadratic relationship between the number of shiny things and the number of ravens is just an artifact of (1) the interaction between shiny things and the number of wolves, and (2) the correlation between the two. The second figure shows the interaction. Within higher quantiles of the distribution of the number of wolves (higher panel number), the effect of shiny objects on the population of ravens becomes stronger. 
+
+
+### 8M4
+
+The figure shows prior predictive simulations for two sets of priors, the upper row uses priors for water and shade that are centered around 0, as well as the prior for the interaction. The lower row uses priors for water constrained to be positive and for shade constrained to negative. The red lines indicate the highest prior for the interaction effect, and the blue line is the smallest one. 
+
+Not sure what McElreath is looking for here but I'll give it a try. The prior for the interaction is not restricted, so it can still be positive or negative. The only constraint is on the main effects. The particular combination of signs of main and interaction effects each has a different interpretation, which I won't go into detail. 
+
+
+
+```{r}
+###--- Load and clean the data 
+data(tulips)
+
+tbl <- 
+  tulips |>
+  as_tibble() |> 
+  mutate(blooms_std = blooms/max(blooms),
+         water_cent = water - mean(water),
+         shade_cent = shade - mean(shade))
+
+
+```
+
+
+```{r}
+###--- Define the priors
+n <- 20
+
+
+###--- As in the book 
+priors_1 <- 
+  tibble(alpha = rnorm(n,.5,.10),
+      b_water = rnorm(n,0,.10),
+      b_shade = rnorm(n,0,.10),
+      sigma = rexp(n,1),
+      b_water_shade = rnorm(n,0,.05))
+
+
+###--- Signed priors for water and shade
+priors_2 <- 
+  tibble(alpha = rnorm(n,.5,.10),
+      b_water = rexp(n,3),
+      b_shade = - rexp(n,3),
+      sigma = rexp(n,1),
+      b_water_shade = rnorm(n,0,.05))
+```
+
+
+
+```{r}
+###--- Now plot the priors for the first set
+plots_1 <- 
+  tbl |>
+  group_by(shade_cent) |> 
+  group_split() |> 
+  lapply(function(df) {
+   shade <- unique(df$shade_cent)
+
+    base_plot <- 
+    df |> 
+    ggplot(aes(water_cent,blooms_std)) +
+    geom_point() +
+    labs(title = paste("Shade =", shade),
+         x = "Water",
+         y = "Blooms") +
+      
+    ###-- Draw some lines
+    apply(priors_1[1:20,],1,function(row){
+      
+    alpha <- row["alpha"]
+    beta_w <- row["b_water"]
+    beta_s <- row["b_shade"]
+    beta_ws <- row["b_water_shade"]
+    line_color <- case_when(
+      beta_ws ==  max(priors_1$b_water_shade) ~ "red",
+      beta_ws == min(priors_1$b_water_shade) ~ "blue",
+      TRUE ~ "black")
+    line_alpha <- ifelse(line_color != "black",1,.2)
+
+    stat_function(
+    fun = function(x)  alpha + beta_w * x + beta_s * shade + beta_ws * x * shade, color = line_color, alpha = line_alpha)
+    
+  }) +
+      theme_pubr(border = TRUE) +
+      ylim(c(0,1))
+  })
+```
+
+
+```{r}
+###--- Plot the priors for the second set
+plots_2 <- 
+  tbl |>
+  group_by(shade_cent) |> 
+  group_split() |> 
+  lapply(function(df) {
+   shade <- unique(df$shade_cent)
+
+    base_plot <- 
+    df |> 
+    ggplot(aes(water_cent,blooms_std)) +
+    geom_point() +
+    labs(title = paste("Shade =", shade),
+         x = "Water",
+         y = "Blooms") +
+      
+    ###-- Draw some lines
+    apply(priors_2[1:20,],1,function(row){
+      
+    alpha <- row["alpha"]
+    beta_w <- row["b_water"]
+    beta_s <- row["b_shade"]
+    beta_ws <- row["b_water_shade"]
+     
+    line_color <- case_when(
+      beta_ws ==  max(priors_2$b_water_shade) ~ "red",
+      beta_ws == min(priors_2$b_water_shade) ~ "blue",
+      TRUE ~ "black")
+    line_alpha <- ifelse(line_color != "black",1,.2)
+
+    stat_function(
+    fun = function(x)  alpha + beta_w * x + beta_s * shade + beta_ws * x * shade, color = line_color, alpha = line_alpha)
+    
+  }) +
+      theme_pubr(border = TRUE) +
+      ylim(c(0,1))
+  })
+```
+
+```{r}
+###--- Plot everything together 
+row1 <- wrap_plots(plots_1) + plot_annotation(title = "Priors Centered on 0")
+
+row2 <- wrap_plots(plots_2) + plot_annotation(title = "Signed Priors")
+
+cowplot::plot_grid(row1,row2,nrow = 2) # Patchwork doesn't preserve row titles
+```
+
+
+
