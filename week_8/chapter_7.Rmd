@@ -1,0 +1,260 @@
+---
+title: "chapter 7"
+author: "Pablo Bello"
+date: "10/17/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+library(rethinking)
+library(tidybayes.rethinking)
+library(tidybayes)
+```
+
+```{r}
+
+tbl <- 
+  tibble(
+  species = c("afarensis","africanus","habilis","boisei","rudolfensis","ergaster","sapiens"),
+  brain = c(438,452,612,521,752,871,1350),
+  mass = c(37.0,35.5,34.5,41.5,55.5,61.0,53.5)) |> 
+  mutate(mass = (mass - mean(mass))/sd(mass),
+         brain = brain/max(brain)) |> 
+  mutate(id = row_number())
+
+```
+
+
+```{r}
+###--- Predict brain size with body mass
+
+model <- alist(
+  brain ~ dnorm(mu,exp(sigma)),
+  mu <- alpha + beta * mass,
+  alpha ~ dnorm(.5,1),
+  beta ~ dnorm(0,10),
+  sigma ~ dnorm(0,1)
+)
+
+model_f <- quap(model,tbl)
+precis(model_f)
+
+
+
+###--- Mean predicted brain size
+var_t <- function(x) {
+  sum((x - mean(x))^2/n())
+}
+
+
+
+get_r2 <- function(tbl){
+   ###--- Calculate R2
+  n <- 10000 # Number o posterior samples per observation
+
+  post_draws <- tidy_draws(model = model_f, n*nrow(tbl)) # Sample the post
+
+  # Make predictions about the expected outcome
+  pred_tbl <- 
+    tbl |> 
+    uncount(n) |> 
+    bind_cols(post_draws) |> 
+    select(!starts_with(".")) |> 
+    mutate(pred_brain = alpha + beta * mass) 
+
+
+  r2 <- 
+    pred_tbl |> 
+  arrange(id) |> 
+  group_by(id) |> 
+  summarise(mean_pred = mean(pred_brain), 
+            brain = unique(brain)) |> 
+  mutate(res = mean_pred - brain) |> 
+  summarise(res_var = var_t(res),
+            res = var_t(brain)) |> 
+  mutate(r2 = 1 - res_var/res) |> 
+  pull(r2)
+  
+  return(r2)
+  
+}
+  
+ 
+
+r2_model_1 <- get_r2(tbl)
+
+ 
+```
+
+
+
+```{r}
+###--- Calculate Log-Pointwise-Predictive-Density
+set.seed(1) 
+
+# Log-probability 
+logprob <- sim(model_f,ll = TRUE, n=1e4)
+
+# Number of observations
+n <- ncol(logprob)
+
+# Number of samples
+ns <- nrow(logprob)
+
+#
+f <- function(i) log_sum_exp(logprob[,i]) - log(ns)
+(lppd <- sapply(1:n, f))
+
+
+```
+
+
+```{r}
+###--- Calculate WAIC
+# New data
+data(cars)
+
+# New model
+model_2 <- alist(
+  dist ~ dnorm(mu,sigma),
+  mu <-a + b * speed,
+  a ~ dnorm(0, 100),
+  b ~ dnorm(0, 10),
+  sigma ~ dexp(1)
+)
+
+# Fit the model
+model_2f <- quap(model_2,data = cars)
+precis(model_2f)
+
+# Sample the posterior
+n <- 1e4
+post_draws <- tidy_draws(model_2f,n = n) |>  select(!starts_with("."))
+
+# Log-likelihood of each observation i at each sample s from the posterior
+log_prob <- sapply(1:n, function(s){
+  
+  # Predicted mu for i based on each sampled parameter from the posterior
+  mu <- post_draws$a[s] + post_draws$b[s] * cars$speed
+  
+  # Log-likelihood of the data given it's predicted mu and sampled sd
+  dnorm(cars$dist,mu,post_draws$sigma[s],log = TRUE)
+  
+})
+
+
+# Compute lppd
+n_cases <- nrow(cars)
+lppd <- sapply(1:n_cases, function(i) log_sum_exp(log_prob[i,]) - log(n))
+
+# Penalty (variance across samples for each observation)
+pWAIC <-sapply(1:n_cases, function(i) var(log_prob[i,]))
+              
+         
+# WAIC
+-2 * (sum(lppd) - sum(pWAIC))
+
+
+WAIC(model_2f)
+```
+
+```{r}
+###--- Fit a new model for comparisson
+# New data
+data(cars)
+
+cars <- 
+  cars |> 
+  as_tibble() |> 
+  mutate(f = rnorm(nrow(cars)))
+
+
+# New model
+model_3 <- alist(
+  dist ~ dnorm(mu,sigma),
+  mu <-a + b * speed + b2 * f,
+  a ~ dnorm(0, 100),
+  b ~ dnorm(0, 10),
+  b2 ~ dnorm(0,10),
+  sigma ~ dexp(1)
+)
+
+# Fit the model
+model_3f <- quap(model_3,data = cars)
+precis(model_3f)
+
+
+
+```
+
+
+```{r}
+###--- Difference in WAIC
+set.seed(91) 
+waic_m2 <-WAIC(model_2f, pointwise=TRUE)$WAIC
+waic_m3 <-WAIC(model_3f,pointwise=TRUE)$WAIC
+
+diff <- waic_m2 - waic_m3
+sqrt(length(waic_m2)*var(diff))
+sd(waic_m2)/length(waic_m2)
+
+
+```
+
+
+```{r}
+data(WaffleDivorce)
+d <-WaffleDivorce
+d$A <-standardize(d$MedianAgeMarriage)
+d$D <-standardize(d$Divorce)
+d$M <-standardize(d$Marriage)
+
+m5.1 <-quap(
+alist(
+D ~dnorm(mu,sigma),
+mu <-a+bA*A,
+a ~dnorm(0,0.2),
+bA ~dnorm(0,0.5),
+sigma ~dexp(1)
+) ,data=d)
+
+m5.2 <-quap(
+alist(
+D ~dnorm(mu,sigma),
+mu <-a+bM*M,
+a ~dnorm(0,0.2),
+bM ~dnorm(0,0.5),
+sigma ~dexp(1)
+) ,data=d)
+
+m5.3 <-quap(
+alist(
+D ~dnorm(mu,sigma),
+mu <-a+bM*M+bA*A,
+a ~dnorm(0,0.2),
+bM ~dnorm(0,0.5),
+bA ~dnorm(0,0.5),
+sigma ~dexp(1)
+) ,data=d)
+```
+
+
+```{r}
+###--- Compare with PSIS (Pareto Smoothed Importance Sampling)
+set.seed(24071847)
+compare(m5.1,m5.2,m5.3,func=PSIS)
+
+
+```
+
+
+
+
+
+

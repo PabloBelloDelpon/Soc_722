@@ -1,0 +1,489 @@
+---
+title: "Chapter 5 SR"
+author: "Pablo Bello"
+date: "10/3/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+library(rethinking)
+library(tidyverse)
+library(ggpubr)
+library(tidybayes)
+library(patchwork)
+library(tidybayes.rethinking)
+theme_set(theme_pubr(border = TRUE))
+```
+
+
+```{r}
+# 5.1 load data and copy
+data(WaffleDivorce)
+tbl <- as_tibble(WaffleDivorce)
+
+# Standardize variables
+tbl <- 
+  tbl |> 
+  transmute(divorce = standardize(Divorce),
+         marriage = standardize(Marriage),
+         age_marriage = standardize(MedianAgeMarriage))
+
+```
+
+
+```{r}
+###--- Define the model 
+model_1 <- alist(
+  divorce ~ dnorm(mu,sigma),
+  mu <- alpha + beta * age_marriage,
+  alpha ~ dnorm(0, .2),
+  beta ~ dnorm(0, .5),
+  sigma ~ dexp(1)
+)
+
+###--- Fit the model
+model_1_fit <- quap(
+  model_1,
+  data = tbl
+)
+
+###--- Summarise
+precis(model_1_fit)
+```
+
+
+```{r}
+###--- Simulate from the priors
+n <- 100
+
+priors_tbl <-
+  tibble(
+  alpha = rnorm(n, 0, .2),
+  beta = rnorm(n,0, .5),
+  sigma = rexp(n,1),
+  age_marriage = sample(tbl$age_marriage,size = n,replace = TRUE)
+  ) |>
+  mutate(mu  = alpha + beta * age_marriage,
+         divorce = rnorm(mu,sigma))
+
+
+###--- Plot priors
+priors_tbl |> 
+  ggplot() +
+  xlim(-2,2) +
+  ylim(-2,2) +
+  geom_abline(aes(slope = beta,intercept = alpha), alpha = .5) +
+  labs(x = "Median Age at Marriage (std)",
+       y = "Divorce Rate (std)",
+       title = "Priors")
+
+
+###-- Make Posterior Predictions
+post_predictions <- 
+  make_post_pred(model_fit = model_1_fit,
+               n_preds = 1000,
+               data = tbl |> select(predictor = age_marriage, outcome = divorce),
+               vars <- c(outcome = "divorce", 
+                         predictor = "age_marriage"))
+
+post_predictions["plot"]
+
+```
+
+
+```{r}
+###--- Model of marriage rate on divorce
+
+###--- Define the model 
+model_2 <- alist(
+  divorce ~ dnorm(mu,sigma),
+  mu <- alpha + beta * marriage,
+  alpha ~ dnorm(0, .2),
+  beta ~ dnorm(0, .5),
+  sigma ~ dexp(1)
+)
+
+###--- Fit the model
+model_2_fit <- quap(
+  model_2,
+  data = tbl
+)
+
+###--- Summarise
+precis(model_2_fit)
+
+###-- Make Posterior Predictions
+post_predictions <- 
+  make_post_pred(model_fit = model_2_fit,
+               n_preds = 1000,
+               data = tbl |> select(predictor = marriage, outcome = divorce),
+               vars <- c(outcome = "divorce", 
+                         predictor = "marriage"))
+
+post_predictions["plot"]
+
+
+```
+
+
+```{r}
+###--- Drawing a DAG
+library(dagitty)
+
+dag <- dagitty("dag{A->D;A->M;M->D}")
+coordinates(dag) <- list(x=c(A=0,D=1,M=2),y=c(A=0,D=1,M=0))
+drawdag(dag)
+
+###--- Check for correlations
+library(corrr)
+tbl |> 
+  select(divorce, marriage, age_marriage) |> 
+  correlate()
+
+
+###--- Second DAG
+dag2 <- dagitty('dag{D<-A->M}')
+
+  # Impliead conditional indep.
+  impliedConditionalIndependencies(dag2)
+```
+
+```{r}
+###--- Include one more predictor in the model
+
+###--- Define the model 
+model_3 <- alist(
+  divorce ~ dnorm(mu,sigma),
+  mu <- alpha + beta_m * marriage + beta_a * age_marriage,
+  alpha ~ dnorm(0, .2),
+  beta_m ~ dnorm(0, .5),
+  beta_a ~ dnorm(0, .5),
+  sigma ~ dexp(1)
+)
+
+###--- Fit the model
+model_3_fit <- quap(
+  model_3,
+  data = tbl
+)
+
+###--- Summarise
+precis(model_3_fit)
+
+###--- Plot coefficients
+
+  # List with models fitted to the data
+  models <- list(model_1 = model_1_fit, 
+                 model_2 = model_2_fit,
+                 model_3 = model_3_fit)
+  
+  # Function to extract coefficients
+  coef_tbl <- 
+    lapply(1:length(models),function(x){
+    
+    tbl <- precis(models[[x]]) # Mean and compatibility intervals for coef
+    model <- names(models)[x] # The name of the model the coefs are coming from
+   
+    # Put it together and return it
+     tbl |> 
+      as_tibble() |> 
+      mutate(coef = rownames(tbl),
+             model = model) |> 
+      relocate(model,coef)
+    
+  }) |> 
+    bind_rows()
+
+  # Plot the coefficients
+  coef_tbl |> 
+    ggplot(aes(mean,coef, color = model)) +
+    geom_point() +
+    geom_linerange(aes(xmin = `5.5%`, xmax = `94.5%`)) +
+    geom_vline(aes(xintercept = 0), color = "red") +
+    facet_wrap(~ model)
+  
+  
+
+
+```
+
+
+```{r}
+###--- Simulate the data (p. 134)
+N <- 50 #number of simulate dStates
+age <- rnorm(N) # sim A
+mar <- rnorm(N,-age) # sim A -> M
+div <- rnorm(N,age) # sim A -> D
+div <-rnorm(N, age + mar) # A -> D <- M
+
+```
+
+
+```{r}
+###--- Plotting Multivariate Posteriors
+
+  
+  ###--- (1) Predictor Residual Plots
+    
+    # Regress each predictor on the other
+    m_res1 <-
+      alist(
+      marriage ~ dnorm(mu, sigma),
+      mu <- alpha + beta_m * age_marriage,
+      alpha ~ dnorm(0,0.2),
+      beta_m ~ dnorm(0,0.5),
+      sigma ~ dexp(1)
+      )
+
+  m_res1_fit <- quap(m_res1, data = tbl)
+  (sum <- precis(m_res1_fit))
+  
+  ###--- Residual plot
+  
+  # 1e3 Predictions for each data point
+  mu <- link(m_res1_fit,n = 1e3)
+  
+  # Mean prediction for each data point
+  mu_mean <- apply (mu,2,mean)
+
+  # Calculate residuals
+  tbl <- 
+    tbl |> 
+    mutate(resid = marriage  - mu_mean,
+           line = marriage - resid)
+  
+   # Residual Plot
+    (p1 <- 
+      tbl |> 
+    ggplot(aes(age_marriage,marriage)) +
+    geom_point() +
+    geom_abline(aes(intercept = sum["alpha","mean"], slope = sum["beta_m","mean"])) +
+    geom_linerange(aes(ymin = line, ymax = marriage)))
+    
+    
+    # Outcome against residuals
+    (p2 <- tbl |> 
+      ggplot(aes(divorce,resid)) +
+      geom_point() +
+      geom_smooth(method = "lm"))
+  
+  
+
+```
+
+```{r}
+  ###--- (1) Predictor Residual Plots 
+  ###--- NOW FOR THE OTHER PREDICTOR
+    
+    # Regress each predictor on the other
+    m_res1 <-
+      alist(
+      age_marriage ~ dnorm(mu, sigma),
+      mu <- alpha + beta_m * marriage,
+      alpha ~ dnorm(0,0.2),
+      beta_m ~ dnorm(0,0.5),
+      sigma ~ dexp(1)
+      )
+
+  m_res1_fit <- quap(m_res1, data = tbl)
+  (sum <- precis(m_res1_fit))
+  
+  ###--- Residual plot
+  
+  # 1e3 Predictions for each data point
+  mu <- link(m_res1_fit,n = 1e3)
+  
+  # Mean prediction for each data point
+  mu_mean <- apply (mu,2,mean)
+
+  # Calculate residuals
+  tbl <- 
+    tbl |> 
+    mutate(resid = age_marriage  - mu_mean,
+           line = age_marriage - resid)
+  
+   # Residual Plot
+   (p3 <- tbl |> 
+    ggplot(aes(marriage,age_marriage)) +
+    geom_point() +
+    geom_abline(aes(intercept = sum["alpha","mean"], slope = sum["beta_m","mean"])) +
+    geom_linerange(aes(ymin = line, ymax = age_marriage)))
+    
+    
+    # Outcome against residuals
+    (p4 <- 
+        tbl |> 
+      ggplot(aes(resid,divorce)) +
+      geom_point() +
+      geom_smooth(method = "lm"))
+```
+
+```{r}
+
+p1 + p3 + p2 + p4
+```
+
+
+```{r}
+###--- POSTERIOR PREDICTION PLOTS
+
+
+n_preds <- 1e4 # Number of draws per observation
+post_draws <- tidy_draws(model_3_fit, n = n_preds*nrow(tbl))  
+
+
+posterior_predicted <- 
+  tbl |> 
+  mutate(id = row_number()) |> 
+  uncount(n_preds) |> 
+  bind_cols(post_draws) |> 
+  select(!starts_with(".")) |> 
+  rowwise() |> 
+  mutate(
+    mu = alpha + beta_m * marriage + beta_a * age_marriage,
+    pred = rnorm(n = 1, 
+                      mean = mu,
+                      sd = sigma)) |> 
+  group_by(id) |> 
+  summarise(
+    lo_bound = PI(mu, prob = .89)[1],
+    up_bound = PI(mu,prob = .89)[2],
+    lo_bound_pred = PI(pred, prob = .89)[1],
+    up_bound_pred = PI(pred, prob = .89)[2],
+    pred_divorce = mean(mu),
+    divorce = unique(divorce),
+  )
+
+
+p1 <- 
+  posterior_predicted |> 
+  ggplot(aes(divorce,pred_divorce)) +
+  geom_point() +
+  geom_abline(aes(intercept = 0, slope = 1)) +
+  geom_linerange(aes(ymin = lo_bound, ymax = up_bound)) +
+  labs(title = "PI for mu")
+
+p2 <- 
+  posterior_predicted |> 
+  ggplot(aes(divorce,pred_divorce)) +
+  geom_point() +
+  geom_abline(aes(intercept = 0, slope = 1)) +
+  geom_linerange(aes(ymin = lo_bound_pred, ymax = up_bound_pred)) +
+  labs(title = "PI for D ~ (mu,sigma)")
+
+p1 + p2 
+  
+ggsave("plot_predictions.png")
+####--- Question. Why don't we use sigma on these predictions? 
+
+```
+
+
+
+```{r}
+###--- Counterfactual plots
+
+###--- Fit the models
+  data(WaffleDivorce) 
+  d <- list()
+  d$A <-standardize(WaffleDivorce$MedianAgeMarriage)
+  d$D <-standardize(WaffleDivorce$Divorce)
+  d$M <-standardize(WaffleDivorce$Marriage)
+  m5.3_A <-quap(
+  alist(
+  ## A->D<-M
+  D ~dnorm(mu,sigma),
+  mu <-a+bM*M+bA*A,
+  a ~dnorm(0,0.2),
+  bM ~dnorm(0,0.5),
+  bA ~dnorm(0,0.5),
+  sigma ~dexp(1),
+  ## A->M
+  M ~dnorm(mu_M,sigma_M),
+  mu_M <-aM+bAM*A,
+  aM ~dnorm(0,0.2),
+  bAM ~dnorm(0,0.5),
+  sigma_M ~dexp(1)
+  ) ,data=d)
+
+
+  precis(m5.3_A)
+
+  # Counterfactual for changes in A
+  A_seq <-seq(from=-2, to=2, length.out=30)
+  
+  # Prepare Data
+  sim_data <-data.frame(A=A_seq)
+  
+  # Simulate M and then D using the new values of A
+  s <- sim(m5.3_A,data=sim_data,vars=c("M","D"))
+
+    # Counterfactual Plots
+     D <- 
+       t(apply(s$D,2,PI)) |> 
+       as_tibble() |> 
+       rename(low = `5%`, high = `94%`) |> 
+       mutate(mean = colMeans(s$D))
+     
+     M <- 
+       t(apply(s$M,2,PI)) |> 
+       as_tibble() |> 
+       rename(low = `5%`, high = `94%`) |> 
+       mutate(mean = colMeans(s$M))
+     
+     sim_data <- 
+       bind_rows(D = D, M = M,.id = "var") |> 
+       bind_cols(A = rep(sim_data$A,2))
+    
+  
+     sim_data |> 
+       ggplot(aes(A,mean, group = var, fill = var)) +
+       geom_line() +
+       geom_ribbon(aes(ymin =low, ymax= high), alpha = .3) +
+       facet_wrap(~ var) +
+       theme(legend.position = "none")
+  
+  
+```
+
+
+```{r}
+###--- What is the effect of changing the ave age at marriage from 20 to 30?
+sim2_dat <-data.frame(A=(c(20,30)-26.1)/1.24)
+s2 <-sim(m5.3_A,data=sim2_dat,vars=c("M","D"))
+mean(s2$D[,2]-s2$D[,1])
+```
+
+
+```{r}
+sim_dat <-data.frame(M=seq(from=-2,to=2,length.out=30),A=0)
+s <-sim(m5.3_A,data=sim_dat,vars="D")
+plot(sim_dat$M,colMeans(s),ylim=c(-2,2),type="l",
+xlab="manipulated M",ylab="counterfactualD")
+shade( apply(s,2,PI),sim_dat$M)
+mtext( "Total Counterfactual Effect of M on D")
+```
+
+
+```{r}
+A_seq <-seq(from=-2,to=2,length.out=30)
+
+post <-extract.samples(m5.3_A)
+M_sim <-with(post,sapply(1:30,
+function(i) rnorm(1e3,aM+bAM*A_seq[i],sigma_M)))
+
+
+D_sim <-with(post,sapply(1:30,
+function(i) rnorm(1e3,a+bA*A_seq[i]+bM*M_sim[,i],sigma)))
+```
+
+
+
+
+

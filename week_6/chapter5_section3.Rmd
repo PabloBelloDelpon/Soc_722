@@ -1,0 +1,57 @@
+---
+title: "Chapter 5 Section 3"
+author: "Pablo Bello"
+date: "10/6/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(rethinking)
+library(janitor)
+library(tidyverse)
+```
+
+
+```{r}
+data(Howell1)
+d <- 
+  Howell1 |> 
+  as_tibble() |> 
+  mutate(sex = ifelse(male == 1,2,1))
+       
+str(d)
+```
+
+
+```{r}
+model_1 <-quap(
+alist(
+height ~dnorm(mu,sigma),
+mu <-a[sex],
+a[sex] ~dnorm(178,20),
+sigma ~dunif(0,50)
+) ,data=d)
+
+precis(model_1,depth=2)
+```
+
+```{r}
+post_draws <- 
+  tidy_draws(model_1) |> 
+  select(!starts_with(".")) |> 
+  clean_names() |> 
+  mutate(diff_fm = a_2 - a_1)
+
+post_draws |> 
+  precis()
+
+
+
+  
+```
+
+

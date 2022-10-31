@@ -1,0 +1,227 @@
+---
+title: "chapter 5 section 2"
+author: "Pablo Bello"
+date: "10/5/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(rethinking)
+library(janitor)
+library(dagitty)
+library(tidyverse)
+data(milk)
+```
+
+```{r}
+tbl <- 
+  as_tibble(milk) |> 
+  clean_names() |> 
+  transmute(kcal = standardize(kcal_per_g),
+         neo = standardize(neocortex_perc),
+         mass = standardize(mass)) |> 
+  drop_na()
+
+```
+
+
+
+```{r}
+
+###--- Define the model 
+model_1 <- alist(
+  kcal ~ dnorm(mu,sigma),
+  mu <- alpha + beta_n * neo,
+  alpha ~ dnorm(0,.2),
+  beta_n ~ dnorm(0,.5), 
+  sigma ~ dexp(1)
+)
+
+###--- Fit the model
+model_1f <- quap(model_1,tbl)
+precis(model_1f)
+###--- Simulate the priors
+
+# Number of lines
+n <- 100
+
+priors_tbl <-
+  tibble(
+  alpha = rnorm(n, 0, .2),
+  beta_n = rnorm(n,0, .5),
+  sigma = rexp(n,1),
+  neo = sample(tbl$neo,size = n,replace = TRUE)
+  ) |>
+  mutate(mu  = alpha + beta_n * neo,
+         kcal = rnorm(mu,sigma))
+
+
+###--- Plot priors
+priors_tbl |> 
+  ggplot() +
+  xlim(-2,2) +
+  ylim(-2,2) +
+  geom_abline(aes(slope = beta_n,intercept = alpha), alpha = .5) +
+  labs(x = "Neocortex perc.",
+       y = "Kcal per gram",
+       title = "Model 1 Priors 
+       alpha ~ dnorm(0,.2) 
+       beta_n ~ dnorm(0,.5)")
+
+
+###--- Plot posterior
+# breaks if slope is not called beta
+make_post_pred(model_fit = model_1f,
+               data = tbl |>
+                 select(predictor = neo,
+                        outcome = kcal),
+               n_preds = 1e2,
+               vars = c(outcome = "kcal",
+                        predictor = "neo"))
+
+
+
+###--- Use body mass of mother as predictor instead
+model_2 <- alist(
+  kcal ~ dnorm(mu,sigma),
+  mu <- alpha + beta_m * mass,
+  alpha ~ dnorm(0,.2),
+  beta_m ~ dnorm(0,.5), 
+  sigma ~ dexp(1)
+)
+
+model_2f <- quap(model_2,tbl)
+
+precis(model_2f)
+
+
+
+###--- Now both mass and neocortex as predictors
+model_3 <- alist(
+  kcal ~ dnorm(mu,sigma),
+  mu <- alpha + beta_n * neo + beta_m * mass,
+  alpha ~ dnorm(0,.2),
+  beta_n ~ dnorm(0,.5), 
+  beta_m ~ dnorm(0,.5),
+  sigma ~ dexp(1)
+)
+
+model_3f <- quap(model_3, data = tbl)
+precis(model_3f)
+
+###--- Plot the coefficients of all models
+  # List with models fitted to the data
+  models <- list(model_1 = model_1f, 
+                 model_2 = model_2f,
+                 model_3 = model_3f)
+  
+  coef_plot(models)
+```
+
+
+
+
+```{r}
+###--- Counterfactual plots for model 3
+
+n_draws <- 1e4
+
+# Values fro counterfactual
+
+
+
+  mass_counter <- tibble(mass = seq(from = min(tbl$mass) - 0.15,
+               to = max(tbl$mass) + 0.15,
+               length.out=30),
+               neo = 0) 
+  
+ neo_counter <- tibble(neo = seq(from = min(tbl$neo) - 0.15,
+             to = max(tbl$neo) + 0.15,
+             length.out=30),
+             mass = 0)
+ 
+ new_tbl <- bind_rows(mass_counter,neo_counter)
+
+
+  post_draws <- 
+    tidy_draws(model_3f,n = n_draws*nrow(new_tbl)) |> 
+    select(!starts_with("."))
+  
+  
+  
+  new_tbl2 <- 
+    new_tbl |>
+    uncount(n_draws) |> 
+    bind_cols(post_draws) |> 
+    mutate(mu = alpha + beta_n * neo + beta_m * mass) |> 
+    select(mass,neo,mu) |> 
+    group_by(mass,neo) |> 
+    summarise(
+      up_pi = quantile(mu,.945),
+      low_pi = quantile(mu,.055),
+      mu = mean(mu)) 
+           
+  
+
+ new_tbl2 |> 
+   pivot_longer(cols = c(mass,neo),names_to = "pred",values_to = "values") |> 
+   filter(values != 0) |> 
+   ggplot(aes(values,mu, group = 1)) +
+   geom_line() +
+   geom_ribbon(aes(ymin = low_pi,ymax = up_pi), alpha = .4) +
+   facet_wrap(~ pred,scales = "free")
+ 
+
+
+```
+
+
+```{r}
+####--- Simulating a masking relationship 
+
+  
+  ###--- Simulate some data
+  # M->K<-N
+  # M->N
+  
+  draws <- 1e4
+  
+  sim_tbl <- tibble(
+    mass = rnorm(draws,0,1),
+    neo = rnorm(draws, rnorm(draws,0,.1) + .4*mass, 1),
+    kcal = rnorm(draws, rnorm(draws,0,.1) + .3*mass - .3*neo,.5))
+  
+  
+  ###--- Fit the model to the made-up data
+  model_1sim <- quap(model_1,sim_tbl)
+  model_2sim <- quap(model_2,sim_tbl)
+  model_3sim <- quap(model_3,sim_tbl)
+
+# List with models fitted to the data
+  models <- list(model_1 = model_1sim, 
+                 model_2 = model_2sim,
+                 model_3 = model_3sim)
+  
+  coef_plot(models)
+
+
+```
+
+
+```{r}
+###--- Different DAGs are compatible with the same conditional independencies
+# This set of equivalent DAGs are the Markov Equivalence
+dag <- dagitty("dag{
+M ->K<-N
+M ->N}")
+
+coordinates(dag) <-list(x=c(M=0,K=1,N=2),y=c(M=0.5,K=1,N=0.5))
+plot(dag)
+MElist <- equivalentDAGs(dag)
+drawdag(MElist)
+```
+

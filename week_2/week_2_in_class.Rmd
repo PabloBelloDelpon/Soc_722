@@ -1,0 +1,66 @@
+---
+title: "week_2_in_class_practice"
+author: "Pablo Bello"
+date: "9/8/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(gssr)
+```
+
+
+```{r, cache=TRUE}
+gss_18 <- gss_get_yr(2018)
+
+head(gss_18)
+
+glimpse(gss_18)
+```
+
+```{r}
+gss_18 |> 
+  count(abany) |> 
+  ggplot(aes(factor(abany),n)) +
+  geom_col() +
+  theme_bw()
+
+```
+
+```{r}
+gss_18 |> 
+  count(abany)
+```
+
+```{r}
+data(gss_doc)
+
+gss_doc |> 
+  filter(id == "abany")
+```
+ 
+
+```{r}
+gss_tbl1 <- 
+  gss_18 |> 
+  select(sex, abany) |> 
+  haven::zap_labels() |> 
+  transmute(sex = ifelse(sex == 1, "male","female"),
+         ab_okay = ifelse(abany == 1, TRUE,FALSE))
+
+gss_tbl1 |> 
+  group_by(sex) |> 
+  summarise(av_okay = mean(ab_okay, na.rm = TRUE)) |> 
+  ggplot(aes(sex,av_okay)) +
+  geom_col(color = "blue", fill = "blue", alpha = .3) +
+  theme_bw()
+
+
+  
+```
+

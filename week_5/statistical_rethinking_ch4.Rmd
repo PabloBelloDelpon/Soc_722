@@ -1,0 +1,128 @@
+---
+title: "Chapter 4 Practice"
+author: "Pablo Bello"
+date: "9/30/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+library(tidyverse)
+library(ggpubr)
+library(rethinking)
+
+theme_set(theme_pubr(border = TRUE))
+```
+
+### 4E1 
+The likelihood is $y_i \sim \textrm{Normal}(\mu, \sigma)$
+
+### 4E2
+There are two $\mu$ and $\sigma$.
+
+### 4E3
+
+$$Pr(\mu,\sigma|y) = \frac{Pr(y|\mu,\sigma) Pr(y)}{\int \int Pr(y | \mu \sigma) Pr(mu) \Pr(\sigma)d\mu d \sigma}$$
+
+
+### 4E4
+
+In the model definition $\mu_i = \alpha + \beta x_i$ is the linear model. 
+
+### 4E5 
+There are 3 parameters.
+
+### 4M1
+
+```{r}
+n <- 1e4
+
+# Prior predictions
+priors <- 
+  tibble(mu = rnorm(n,0,10),
+         sigma = rexp(n,1)) |> 
+  mutate(pred_h = rnorm(mu,sigma))
+
+# Plot the prior predictions
+priors |> 
+  ggplot(aes(pred_h)) +
+  geom_density() +
+  labs(title = "Predicted values for height from priors",
+       x = "Predicted height")
+  
+```
+
+
+### 4M2
+```{r}
+model_h <- 
+  alist(h ~ dnorm(mu,sigma),
+        mu ~ dnorm(0,10),
+        sigma ~ dexp(1))
+```
+
+### 4M3
+
+
+$$
+\begin{aligned}
+y_i &\sim \textrm{Normal}(\mu,\sigma) \\ 
+\mu &= \alpha + \beta x_i \\
+\alpha &\sim \textrm{Normal}(0,10) \\
+\beta &\sim \textrm{Uniform}(0,1) \\
+\sigma &\sim \textrm{Exponential}(1)
+\end{aligned}
+$$
+
+### 4M4
+Assuming both height and year are mean centered. We don't expect students to shrink with time so beta can only be positive. 
+
+$$
+\begin{aligned}
+h_i &\sim \textrm{Normal}(\mu,\sigma) \\ 
+\mu &= \alpha + \beta year_i \\
+\alpha &= 0 \\
+\beta &\sim \textrm{Lognormal}(0,1) \\
+\sigma &\sim \textrm{Uniform}(0,30)
+\end{aligned}
+$$
+
+
+
+### 4M5
+
+That is why I would choose a lognormal prior. 
+
+### 4M6
+
+If that information comes from this data I would not use it to inform my priors, simply because they are priors. If it comes from somewhere else I would do $\sigma \sim \textrm{Uniform}(0,8)$. 
+
+### 4M7
+```{r}
+###--- Load the data
+    tbl <- Howell1
+    tbl_2 <- 
+      as_tibble(tbl) |> 
+      filter(age >= 18) 
+    
+###--- Define the model
+  model <- alist(
+    height_c ~ dnorm(mu,sigma),
+    mu <- beta * weight_c,
+    beta ~ dlnorm(0,1),
+    sigma ~ dunif(0,30)
+   # alpha is not defined because both variables are mean centered
+  )
+  
+  ###--- Fit the model
+  model_fit <- 
+    quap(model,
+      data = tbl_2)
+  
+```
+

@@ -1,0 +1,358 @@
+---
+title: "Book Examples Chapter 6"
+author: "Pablo Bello"
+date: "10/11/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(corrr)
+library(rethinking)
+library(janitor)
+library(ggpubr)
+library(dagitty)
+theme_set(theme_pubr(border = TRUE))
+```
+
+## Berkson's Paradox
+```{r}
+###--- Berkson's Paradox
+
+# Let's imagine a world where wealth and intelligence are completely independent
+world <- 
+  tibble(
+  wealth = rnorm(1e4),
+  intelligence = rnorm(1e4))
+
+# Now let's pick the most clever and intelligent people to be 'celebrities' in this world
+celebrities <- 
+  world |> 
+  mutate(celeb_score = wealth + intelligence) |> 
+  arrange(desc(celeb_score)) |> 
+  slice_head(prop = .10) # Pick the top 10%
+
+# What's the relationship between intelligence and wealth for celebrities? 
+celebrities |> 
+  select(-celeb_score) |> 
+  correlate()
+
+```
+
+## Multicollinearity
+
+```{r}
+###--- Multicollinearity
+data(milk)
+tbl <- 
+  as_tibble(milk) |> 
+  clean_names() |> 
+  transmute(kcal = standardize(kcal_per_g),
+         fat = standardize(perc_fat),
+         lac = standardize(perc_lactose)) |> 
+  drop_na()
+
+
+###--- Model 1
+model_1 <- alist(
+  kcal ~ dnorm(mu,sigma),
+  mu <- alpha + beta * fat,
+  alpha ~ dnorm(0,.2),
+  beta ~ dnorm(0,.5),
+  sigma ~ dexp(1)
+)
+
+###--- Fit model 1
+model_1f <- quap(model_1,data = tbl)
+precis(model_1f)
+
+
+###--- Model 2
+model_2 <- alist(
+  kcal ~ dnorm(mu,sigma),
+  mu <- alpha + beta * lac,
+  alpha ~ dnorm(0,.2),
+  beta ~ dnorm(0,.5),
+  sigma ~ dexp(1)
+)
+
+###--- Fit model 2
+model_2f <- quap(model_2,data = tbl)
+precis(model_2f)
+
+
+###--- Model 3 (both predictos)
+model_3 <- alist(
+  kcal ~ dnorm(mu,sigma),
+  mu <- alpha + beta_l * lac + beta_f * fat,
+  alpha ~ dnorm(0,.2),
+  beta_l ~ dnorm(0,.5),
+  beta_f ~ dnorm(0,.5),
+  sigma ~ dexp(1)
+)
+
+###--- Fit model 2
+model_3f <- quap(model_3,data = tbl)
+precis(model_3f)
+
+```
+
+
+```{r}
+###--- Simulate the effect of multiollinearity on parameter SDs
+
+sim_coll <- function(r, data){
+  data <- data |> 
+    mutate(x = rnorm(nrow(data),
+                     mean = r * fat,
+                     sd = sqrt((1 - r^2) * var(fat))))
+  
+  model <- lm(kcal ~ fat + x, data=data)
+  sqrt(diag(vcov(model)))[2] # Std of parameter
+  
+}
+
+rep_sim_coll <- function(r, n, data){
+  std <- replicate(n, sim_coll(r, data))
+  mean(std)
+}
+
+
+
+results <- 
+  lapply(seq(0,.99,.01), function(e){
+  
+  sd <- rep_sim_coll(e,10, tbl)
+  tibble(e,sd)
+  
+}) |> 
+  bind_rows()
+
+
+results |> 
+  ggplot(aes(e, sd)) +
+  geom_point()
+  
+
+
+```
+
+
+
+## Post-treatment Bias
+
+```{r}
+set.seed(061295)
+
+###--- Number of plants
+N <- 1e4
+
+###--- Initial height
+h0 <- rnorm(N,10,2)
+
+###--- Assign treatments and simulate fungus and growth
+treatment <- rep(0:1,each=N/2)
+fungus <- rbinom(N,size=1,prob=0.5-treatment*0.4)
+h1 <- h0 + rnorm(N, 5-3 * fungus)
+
+###--- Compose a clean tibble
+tbl <- tibble(h0,h1,treatment,fungus)
+
+
+
+###--- A model for the rate of growth
+model_1 <- alist(
+  h1 ~ dnorm(mu,sigma),
+  mu <- h0 * p,
+  p ~ dnorm(0,.25),
+  sigma ~ dexp(1))
+
+model_1f <- quap(model_1,data = tbl)
+precis(model_1f)
+
+###--- Now predict the growth with fungus and treatment
+model_2 <- alist(
+  h1 ~ dnorm(mu,sigma),
+  mu <- h0 * p,
+  p <- alpha + treatment * beta_t + fungus * beta_f,
+  beta_t ~ dnorm(0,.5),
+  beta_f ~ dnorm(0,.5),
+  sigma ~ dexp(1),
+  alpha ~ dnorm(0,.2))
+
+model_2f <- quap(model_2,data = tbl)
+precis(model_2f)
+
+###--- Fungus is a post-treatment variable, and a mediator between treatment and growth
+###--- Now run the model without fungus, just treatment
+model_3 <- alist(
+  h1 ~ dnorm(mu,sigma),
+  mu <- h0 * p,
+  p <- alpha + treatment * beta_t,
+  beta_t ~ dnorm(0,.5),
+  sigma ~ dexp(1),
+  alpha ~ dnorm(0,.2))
+
+model_3f <- quap(model_3,data = tbl)
+precis(model_3f)
+```
+
+
+
+
+## D-Separation
+```{r}
+###---- DAG for the Fungus model 
+plant_dag <- dagitty("dag {
+                     h0 -> h1
+                     f -> h1
+                     t -> f
+}")
+
+coordinates(plant_dag) <- list( 
+  x = c(H_0 = 0, T = 2, F = 1.5, H_1 = 1),
+  y = c(H_0 = 0,T = 0,F = 0, H_1 = 0))
+
+drawdag(plant_dag)
+```
+
+
+
+## Collider Bias
+
+### Simulate collider bias
+
+- Each year, 20 people are born with uniformly distributed happiness values.
+- Each year, each person ages one year. Happiness does not change.
+- At age 18, individuals can become married. The odds of marriage each year are proportional to an individual's happiness.
+- Once married, an individual remains married.
+- After age 65, individuals leave the sample (they move to Spain). 
+
+
+```{r}
+N <- 100
+years <- 1:(65-18)
+
+tbl <- 
+  tibble(
+  agents = 1:N,
+  h = runif(N,0,1),
+  married = 0,
+  age = 18)
+
+married <- c()
+for(i in years){
+  tbl <- 
+    tbl |> 
+    mutate(age = age + 1) |> 
+    rowwise() |> 
+    mutate(married_p = rnorm(1,runif(1,0,1)*.5 + h *.5, .2), 
+           married = ifelse(married_p > .9,1,married)) 
+  
+  married[i] <- sum(tbl$married)
+
+}
+
+
+
+tibble(years, married) |> 
+  ggplot(aes(years,married)) +
+  geom_line()
+
+```
+
+
+
+```{r}
+###--- Regress happiness on age
+tbl <- sim_happiness(seed=1977, N_years=1000)
+tbl2 <- 
+  as_tibble(tbl) |> 
+  filter(age > 17) |> 
+  mutate(age = (age - 18)/(65-18)) |> 
+  mutate(married = married + 1)
+
+
+###--- Define the  Model
+model_1 <- alist(
+  happiness ~ dnorm(mu,sigma),
+  mu <- a[married] + beta * age,
+  a[married] ~ dnorm(0,1),
+  beta ~ dnorm(0,2),
+  sigma ~ dexp(1)
+)
+
+model_1f <- quap(model_1,data = tbl2)
+precis(model_1f, depth = 2)
+```
+
+
+### New simulation
+
+(1) P is some function of G and U
+(2) C is some function of G, P, and U
+(3) G and U are not functions of any other known variables
+
+
+```{r}
+###---- DAG for the simulation 
+fam_dag <- dagitty("dag {
+                     U [unobserved]
+                     G -> P
+                     G -> C
+                     P -> C
+                     U -> C
+                     U -> P
+}")
+
+coordinates(fam_dag) <- list( 
+  x = c(G = 0, P = 1, C = 1, U = 2),
+  y = c(G = 0,P = 0,C = 1, U = 0.5))
+
+drawdag(fam_dag)
+
+
+###----Define the model
+
+N <- 200 # number of grandparent-parent-child triads
+b_GP <- 1 # direct effect of G on P
+b_GC <- 0 # direct effect of G on C
+b_PC <- 1 # direct effect of P on C
+b_U <- 2 # direct effect of U on P and C
+
+###--- Simulate the data 
+set.seed(061295)
+tbl <- 
+  tibble(
+    U = 2 * rbern(N,.5) - 1,
+    G = rnorm(N),
+    P = rnorm(N, b_GP * G + b_U * U),
+    C = rnorm(N, b_GC * G + b_PC * P + b_U * U)
+  )
+
+
+###--- Estimate the direct effect of G on C
+
+model <- alist(
+  C ~ dnorm(mu,sigma),
+  mu <- alpha + beta_P * P + beta_G * G,
+  beta_P ~ dnorm(0,1),
+  beta_G ~ dnorm(0,1),
+  alpha ~ dnorm(0,1),
+  sigma ~ dexp(1)
+)
+
+
+model_f <- quap(model,data = tbl)
+precis(model_f)
+
+
+```
+
+
+
+
